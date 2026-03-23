@@ -219,6 +219,7 @@ class ActivityTracker: ObservableObject {
         let resolved = CategoryEngine.shared.resolve(
             appName: appName,
             bundleId: currentBundleId,
+            windowTitle: currentWindowTitle,
             domain: domain
         )
 
