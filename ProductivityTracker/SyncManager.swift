@@ -67,6 +67,7 @@ class SyncManager {
                     if let bundleId = record.bundleId { dict["bundleId"] = bundleId }
                     if let windowTitle = record.windowTitle { dict["windowTitle"] = windowTitle }
                     if let url = record.url { dict["url"] = url }
+                    if let domain = record.domain { dict["domain"] = domain }
                     return dict
                 }
 

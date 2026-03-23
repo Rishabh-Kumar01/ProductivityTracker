@@ -16,6 +16,7 @@ struct ActivityRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
     var bundleId: String?
     var windowTitle: String?
     var url: String?
+    var domain: String?
     var category: String = "Uncategorized"
     var productivityScore: Int = 2  // 0-4 scale: 0=veryDistracting, 4=veryProductive
     var startTime: Date
@@ -112,6 +113,12 @@ final class DatabaseManager {
         migrator.registerMigration("v3-sync-fix") { db in
             try db.alter(table: "activities") { t in
                 t.add(column: "isSyncing", .boolean).defaults(to: false)
+            }
+        }
+
+        migrator.registerMigration("v4-domain") { db in
+            try db.alter(table: "activities") { t in
+                t.add(column: "domain", .text)
             }
         }
 

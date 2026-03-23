@@ -44,8 +44,12 @@ class BrowserURLTracker {
         "com.microsoft.edgemac": "Microsoft Edge"
     ]
 
-    // Track which browsers have denied automation permission so we don't spam logs
-    private var deniedBrowsers: Set<String> = []
+    // Retry-with-backoff: track denied browsers with retry timestamps
+    private struct DeniedState {
+        var retryAfter: Date
+        var backoffSeconds: TimeInterval  // starts at 60, doubles to max 300
+    }
+    private var deniedBrowsers: [String: DeniedState] = [:]
 
     // Track whether we've already shown the permission prompt to the user
     private var hasShownPermissionPrompt = false
@@ -68,13 +72,33 @@ class BrowserURLTracker {
         print("[URLTracker] Reset all denied browser statuses — will retry on next poll")
     }
 
+    /// Run a startup diagnostic: test AppleScript for each running browser
+    func runStartupDiagnostic() {
+        let runningApps = NSWorkspace.shared.runningApplications
+        for (bundleId, _) in browserScripts {
+            let name = browserNames[bundleId] ?? bundleId
+            let isRunning = runningApps.contains { $0.bundleIdentifier == bundleId }
+            guard isRunning else { continue }
+
+            let url = getURL(forBundleId: bundleId)
+            if url != nil {
+                print("[URLTracker] \(name): ✓ URL access granted")
+            } else if deniedBrowsers[bundleId] != nil {
+                print("[URLTracker] \(name): ✗ denied — will retry in 60s")
+            }
+        }
+    }
+
     /// Get the current URL from the frontmost browser tab
     func getURL(forBundleId bundleId: String) -> String? {
         guard let scriptSource = browserScripts[bundleId] else { return nil }
 
-        // Skip browsers where we already know automation is denied
-        if deniedBrowsers.contains(bundleId) {
-            return nil
+        // Check retry-with-backoff: skip if denied and not yet time to retry
+        if let denied = deniedBrowsers[bundleId] {
+            if Date() < denied.retryAfter {
+                return nil  // Still in backoff period — skip silently
+            }
+            // Time to retry — remove from denied and try again
         }
 
         // Verify the browser is actually running before executing AppleScript
@@ -91,10 +115,15 @@ class BrowserURLTracker {
         if let error {
             let errorNumber = error[NSAppleScript.errorNumber] as? Int
             if errorNumber == -1743 {
-                // Automation permission denied — cache it so we don't retry every 2s
+                // Automation permission denied — use exponential backoff
                 let name = browserNames[bundleId] ?? bundleId
-                deniedBrowsers.insert(bundleId)
-                print("[URLTracker] ⚠️ Automation permission denied for \(name). URL tracking disabled for this browser until permission is granted.")
+                let currentBackoff = deniedBrowsers[bundleId]?.backoffSeconds ?? 30
+                let nextBackoff = min(currentBackoff * 2, 300)  // max 5 minutes
+                deniedBrowsers[bundleId] = DeniedState(
+                    retryAfter: Date().addingTimeInterval(nextBackoff),
+                    backoffSeconds: nextBackoff
+                )
+                print("[URLTracker] ⚠️ Automation denied for \(name). Will retry in \(Int(nextBackoff))s.")
 
                 // Show ONE system prompt to guide the user
                 if !hasShownPermissionPrompt {
@@ -109,6 +138,12 @@ class BrowserURLTracker {
                 print("[URLTracker] AppleScript error for \(bundleId): \(error)")
             }
             return nil
+        }
+
+        // SUCCESS — if this browser was previously denied, clear it
+        if deniedBrowsers.removeValue(forKey: bundleId) != nil {
+            let name = browserNames[bundleId] ?? bundleId
+            print("[URLTracker] ✓ \(name) permission granted — URL tracking resumed")
         }
 
         return result.stringValue

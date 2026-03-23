@@ -40,6 +40,18 @@ class ActivityTracker: ObservableObject {
     private let idleDetector: IdleDetector
     private let browserURLTracker = BrowserURLTracker()
 
+    // System processes to exclude from tracking
+    private let excludedBundleIds: Set<String> = [
+        "com.apple.loginwindow",
+        "com.apple.SecurityAgent",
+        "com.apple.screensaver",
+        "com.apple.screencaptureui",
+        "com.apple.UserNotificationCenter",
+        "com.apple.dock",
+        "com.apple.finder",            // Optional: remove if you want Finder tracked
+        "com.rishabh.ProductivityTracker",  // Don't track ourselves
+    ]
+
     init(idleDetector: IdleDetector) {
         self.idleDetector = idleDetector
     }
@@ -89,6 +101,9 @@ class ActivityTracker: ObservableObject {
 
         // Load initial stats
         refreshStats()
+
+        // Run browser URL diagnostic on startup
+        browserURLTracker.runStartupDiagnostic()
     }
 
     func stopTracking() {
@@ -115,6 +130,11 @@ class ActivityTracker: ObservableObject {
         let appName = app.localizedName ?? "Unknown"
         let bundleId = app.bundleIdentifier
         let pid = app.processIdentifier
+
+        // Skip excluded system processes
+        if let bundleId, excludedBundleIds.contains(bundleId) {
+            return  // Keep previous activity running
+        }
 
         // Close previous activity
         closeCurrentActivity()
@@ -207,6 +227,7 @@ class ActivityTracker: ObservableObject {
             bundleId: currentBundleId,
             windowTitle: currentWindowTitle,
             url: currentURL,
+            domain: domain,
             category: resolved.category,
             productivityScore: resolved.score,
             startTime: startTime,
