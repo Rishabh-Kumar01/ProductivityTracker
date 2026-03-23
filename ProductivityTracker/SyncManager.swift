@@ -14,7 +14,6 @@ class SyncManager {
 
     private var syncTimer: Timer?
     private let baseURL = "http://localhost:3000/api"
-    private var isSyncing = false
 
     private init() {}
 
@@ -39,28 +38,23 @@ class SyncManager {
     }
 
     func performSync() {
-        guard !isSyncing else { return }
-        guard AuthManager.shared.isLoggedIn else {
-            print("[Sync] Skipping — not logged in")
-            return
-        }
-
-        isSyncing = true
+        guard AuthManager.shared.isLoggedIn else { return }
 
         Task {
-            defer { isSyncing = false }
-
             do {
-                // 1. Fetch unsynced records from SQLite (max 100 to avoid timeout)
+                // 1. Fetch unsynced records (WHERE isSynced=false AND isSyncing=false)
                 let records = try DatabaseManager.shared.getUnsyncedActivities(limit: 100)
-                guard !records.isEmpty else {
-                    print("[Sync] No unsynced activities")
-                    return
-                }
+                guard !records.isEmpty else { return }
+
+                let ids = records.map { $0.id }
+                
+                // 2. Atomically mark as syncing BEFORE the POST
+                //    This prevents the next sync cycle from re-fetching these records
+                try DatabaseManager.shared.markAsSyncing(ids: ids)
                 
                 print("[Sync] Found \(records.count) unsynced activities, uploading...")
 
-                // 2. Convert to JSON payload
+                // 3. Convert to JSON payload
                 let activities = records.map { record -> [String: Any] in
                     var dict: [String: Any] = [
                         "appName": record.appName,
@@ -78,7 +72,7 @@ class SyncManager {
 
                 let payload: [String: Any] = ["activities": activities]
 
-                // 3. POST to server with explicit timeout
+                // 4. POST to server
                 let url = URL(string: "\(baseURL)/activities/bulk")!
                 var request = AuthManager.shared.authenticatedRequest(url: url)
                 request.httpMethod = "POST"
@@ -87,7 +81,10 @@ class SyncManager {
                 request.timeoutInterval = 30
 
                 let (responseData, response) = try await URLSession.shared.data(for: request)
-                guard let httpResponse = response as? HTTPURLResponse else { return }
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    try DatabaseManager.shared.markAsSyncFailed(ids: ids)
+                    return
+                }
                 
                 print("[Sync] Server responded with status: \(httpResponse.statusCode)")
 
@@ -102,25 +99,28 @@ class SyncManager {
                     request.timeoutInterval = 30
 
                     let (_, retryResponse) = try await URLSession.shared.data(for: request)
-                    guard let retryHttp = retryResponse as? HTTPURLResponse else { return }
+                    guard let retryHttp = retryResponse as? HTTPURLResponse else {
+                        try DatabaseManager.shared.markAsSyncFailed(ids: ids)
+                        return
+                    }
                     
                     if retryHttp.statusCode == 201 {
-                        let ids = records.map { $0.id }
                         try DatabaseManager.shared.markAsSynced(ids: ids)
                         print("[Sync] Synced \(ids.count) activities after token refresh")
                     } else {
                         print("[Sync] Retry failed with status: \(retryHttp.statusCode)")
+                        try DatabaseManager.shared.markAsSyncFailed(ids: ids)
                     }
                 } else if httpResponse.statusCode == 201 {
-                    // 4. Mark as synced in SQLite
-                    let ids = records.map { $0.id }
+                    // 5. Success — mark as synced
                     try DatabaseManager.shared.markAsSynced(ids: ids)
                     print("[Sync] Successfully synced \(ids.count) activities")
                 } else {
-                    // Log unexpected response
+                    // Unexpected response — revert isSyncing so they retry
                     if let body = String(data: responseData, encoding: .utf8) {
                         print("[Sync] Unexpected response (\(httpResponse.statusCode)): \(body)")
                     }
+                    try DatabaseManager.shared.markAsSyncFailed(ids: ids)
                 }
 
             } catch {

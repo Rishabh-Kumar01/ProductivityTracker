@@ -23,6 +23,7 @@ struct ActivityRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
     var duration: Int  // seconds
     var isIdle: Bool = false
     var isSynced: Bool = false
+    var isSyncing: Bool = false
 
     static let databaseTableName = "activities"
 }
@@ -105,6 +106,12 @@ final class DatabaseManager {
                 t.column("isUserOverride", .boolean).defaults(to: false)
 
                 t.uniqueKey(["matchType", "matchValue"])
+            }
+        }
+
+        migrator.registerMigration("v3-sync-fix") { db in
+            try db.alter(table: "activities") { t in
+                t.add(column: "isSyncing", .boolean).defaults(to: false)
             }
         }
 
@@ -221,10 +228,18 @@ final class DatabaseManager {
     func getUnsyncedActivities(limit: Int = 500) throws -> [ActivityRecord] {
         try dbQueue.read { db in
             try ActivityRecord
-                .filter(Column("isSynced") == false)
+                .filter(Column("isSynced") == false && Column("isSyncing") == false)
                 .order(Column("startTime").asc)
                 .limit(limit)
                 .fetchAll(db)
+        }
+    }
+
+    func markAsSyncing(ids: [String]) throws {
+        _ = try dbQueue.write { db in
+            try ActivityRecord
+                .filter(ids.contains(Column("id")))
+                .updateAll(db, Column("isSyncing").set(to: true))
         }
     }
 
@@ -232,7 +247,18 @@ final class DatabaseManager {
         _ = try dbQueue.write { db in
             try ActivityRecord
                 .filter(ids.contains(Column("id")))
-                .updateAll(db, Column("isSynced").set(to: true))
+                .updateAll(db,
+                    Column("isSynced").set(to: true),
+                    Column("isSyncing").set(to: false)
+                )
+        }
+    }
+
+    func markAsSyncFailed(ids: [String]) throws {
+        _ = try dbQueue.write { db in
+            try ActivityRecord
+                .filter(ids.contains(Column("id")))
+                .updateAll(db, Column("isSyncing").set(to: false))
         }
     }
 
