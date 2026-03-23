@@ -139,6 +139,83 @@ final class DatabaseManager {
         }
     }
 
+    // MARK: - Query Daily Usage
+    
+    struct TopApp: Identifiable {
+        var id = UUID()
+        var appName: String
+        var duration: Int
+    }
+    
+    struct DailySummary {
+        var productivityScore: Double
+        var topApps: [TopApp]
+    }
+    
+    func getTodaysSummary() throws -> DailySummary {
+        try dbQueue.read { db in
+            let startOfDay = Calendar.current.startOfDay(for: Date())
+            let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: startOfDay)!
+            
+            // Calculate Top 3 Apps
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT appName, SUM(duration) as totalDuration
+                FROM activities
+                WHERE startTime >= ? AND startTime < ? AND isIdle = 0
+                GROUP BY appName
+                ORDER BY totalDuration DESC
+                LIMIT 3
+                """, arguments: [startOfDay, endOfDay])
+                
+            let topApps = rows.map { row in
+                TopApp(appName: row["appName"] as String, duration: row["totalDuration"] as Int)
+            }
+            
+            // Calculate average Productivity Score weighted by duration
+            let scoreRow = try Row.fetchOne(db, sql: """
+                SELECT SUM(productivityScore * duration) as weightedScore, SUM(duration) as totalDuration
+                FROM activities
+                WHERE startTime >= ? AND startTime < ? AND isIdle = 0
+                """, arguments: [startOfDay, endOfDay])
+            
+            var avgScore = 5.0
+            if let row = scoreRow, let weightedScore: Double = row["weightedScore"], let totalDuration: Double = row["totalDuration"], totalDuration > 0 {
+                // Productivity score in DB is 0-4. Scale to 0-10
+                avgScore = (weightedScore / totalDuration) * 2.5
+            }
+            
+            return DailySummary(productivityScore: avgScore, topApps: topApps)
+        }
+    }
+    
+    func getDailyUsage(forBundleId bundleId: String, on date: Date = Date()) throws -> Int {
+        try dbQueue.read { db in
+            let startOfDay = Calendar.current.startOfDay(for: date)
+            let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: startOfDay)!
+            
+            let totalSeconds = try Int.fetchOne(db, sql: """
+                SELECT SUM(duration) FROM activities 
+                WHERE bundleId = ? AND startTime >= ? AND startTime < ? AND isIdle = 0
+                """, arguments: [bundleId, startOfDay, endOfDay])
+            
+            return totalSeconds ?? 0
+        }
+    }
+    
+    func getDailyUsage(forCategory category: String, on date: Date = Date()) throws -> Int {
+        try dbQueue.read { db in
+            let startOfDay = Calendar.current.startOfDay(for: date)
+            let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: startOfDay)!
+            
+            let totalSeconds = try Int.fetchOne(db, sql: """
+                SELECT SUM(duration) FROM activities 
+                WHERE category = ? AND startTime >= ? AND startTime < ? AND isIdle = 0
+                """, arguments: [category, startOfDay, endOfDay])
+            
+            return totalSeconds ?? 0
+        }
+    }
+
     // MARK: - Sync Helpers
 
     func getUnsyncedActivities(limit: Int = 500) throws -> [ActivityRecord] {

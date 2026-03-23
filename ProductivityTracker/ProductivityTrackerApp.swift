@@ -19,6 +19,30 @@ struct ProductivityTrackerApp: App {
         let idle = IdleDetector(threshold: 300)
         _idleDetector = StateObject(wrappedValue: idle)
         _tracker = StateObject(wrappedValue: ActivityTracker(idleDetector: idle))
+        
+        let _ = AlertManager.shared.fetchRules()
+        
+        // Start syncing data to cloud if logged in
+        if AuthManager.shared.isLoggedIn {
+            SyncManager.shared.startSync()
+        }
+        
+        // Watch for login state changes to start/stop sync
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("UserDidLogin"),
+            object: nil,
+            queue: .main
+        ) { _ in
+            SyncManager.shared.startSync()
+        }
+        
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("UserDidLogout"),
+            object: nil,
+            queue: .main
+        ) { _ in
+            SyncManager.shared.stopSync()
+        }
     }
 
     var body: some Scene {
@@ -33,6 +57,10 @@ struct ProductivityTrackerApp: App {
                 }
         }
         .menuBarExtraStyle(.window)
+        
+        Settings {
+            SettingsView()
+        }
     }
 }
 

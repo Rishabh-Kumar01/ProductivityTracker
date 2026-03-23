@@ -7,10 +7,16 @@
 
 import SwiftUI
 import ServiceManagement
+import Combine
 
 struct MenuBarView: View {
     @ObservedObject var tracker: ActivityTracker
+    @ObservedObject var blockManager = BlockManager.shared
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    
+    @State private var dbScore: Double = 5.0
+    @State private var dbTopApps: [DatabaseManager.TopApp] = []
+    let timer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -19,9 +25,9 @@ struct MenuBarView: View {
                 Text("Today's Score")
                     .font(.headline)
                 Spacer()
-                Text("\(Int(tracker.todayScore))")
+                Text(String(format: "%.1f", dbScore))
                     .font(.title2.bold())
-                    .foregroundColor(scoreColor(tracker.todayScore))
+                    .foregroundColor(scoreColor(dbScore))
             }
 
             // Total tracked time
@@ -41,12 +47,12 @@ struct MenuBarView: View {
             Divider()
 
             // Top 3 apps today
-            if tracker.topApps.isEmpty {
+            if dbTopApps.isEmpty {
                 Text("No activity yet")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             } else {
-                ForEach(tracker.topApps) { app in
+                ForEach(dbTopApps, id: \.appName) { app in
                     HStack {
                         Text(app.appName)
                             .font(.subheadline)
@@ -61,17 +67,35 @@ struct MenuBarView: View {
 
             Divider()
 
-            // Open Dashboard (disabled for now)
-            Button(action: {}) {
+            // Open Dashboard
+            Button(action: {
+                if let url = URL(string: "http://localhost:5173") {
+                    NSWorkspace.shared.open(url)
+                }
+            }) {
                 Label("Open Dashboard", systemImage: "globe")
             }
-            .disabled(true)
 
-            // Settings (disabled for now)
-            Button(action: {}) {
-                Label("Settings...", systemImage: "gear")
+            // Settings
+            if #available(macOS 13.0, *) {
+                SettingsLink {
+                    Label("Settings...", systemImage: "gear")
+                }
+            } else {
+                Button(action: {
+                    NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+                }) {
+                    Label("Settings...", systemImage: "gear")
+                }
             }
-            .disabled(true)
+
+            Divider()
+
+            // Focus Mode toggle
+            Toggle(isOn: $blockManager.isBlockingActive) {
+                Label("Focus Mode (Block Apps/Websites)", systemImage: "moon.fill")
+            }
+            .tint(.purple)
 
             // Launch at Login toggle
             Toggle(isOn: $launchAtLogin) {
@@ -100,7 +124,16 @@ struct MenuBarView: View {
             }
         }
         .padding()
-        .frame(width: 280)
+        .frame(width: 250)
+        .onAppear(perform: updateData)
+        .onReceive(timer) { _ in updateData() }
+    }
+    
+    private func updateData() {
+        if let summary = try? DatabaseManager.shared.getTodaysSummary() {
+            self.dbScore = summary.productivityScore
+            self.dbTopApps = summary.topApps
+        }
     }
 
     // MARK: - Helpers
