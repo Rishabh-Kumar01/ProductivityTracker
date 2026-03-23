@@ -16,6 +16,7 @@ struct MenuBarView: View {
     
     @State private var dbScore: Double = 5.0
     @State private var dbTopApps: [DatabaseManager.TopApp] = []
+    @State private var dbTopDomains: [(domain: String, duration: Int)] = []
     let timer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -66,6 +67,28 @@ struct MenuBarView: View {
             }
 
             Divider()
+
+            // Top 3 domains today
+            if !dbTopDomains.isEmpty {
+                Label("Top Websites", systemImage: "globe.americas")
+                    .font(.caption.bold())
+                    .foregroundColor(.secondary)
+                    .padding(.top, 2)
+                
+                ForEach(dbTopDomains, id: \.domain) { dom in
+                    HStack {
+                        Text(dom.domain)
+                            .font(.subheadline)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(formatDuration(dom.duration))
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                Divider()
+            }
 
             // Open Dashboard
             Button(action: {
@@ -133,6 +156,9 @@ struct MenuBarView: View {
         if let summary = try? DatabaseManager.shared.getTodaysSummary() {
             self.dbScore = summary.productivityScore
             self.dbTopApps = summary.topApps
+        }
+        if let domains = try? DatabaseManager.shared.getTodayTopDomains() {
+            self.dbTopDomains = domains
         }
     }
 

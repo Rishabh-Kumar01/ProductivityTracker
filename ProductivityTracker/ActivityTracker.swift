@@ -22,6 +22,7 @@ struct TopApp: Identifiable {
 class ActivityTracker: ObservableObject {
     @Published var todayScore: Double = 0.0
     @Published var topApps: [TopApp] = []
+    @Published var topDomains: [(domain: String, duration: Int)] = []
     @Published var totalDuration: Int = 0
     @Published var isTracking = false
 
@@ -277,6 +278,7 @@ class ActivityTracker: ObservableObject {
                 let score = try DatabaseManager.shared.getTodayProductivityScore()
                 let total = try DatabaseManager.shared.getTodayTotalDuration()
                 let activities = try DatabaseManager.shared.getTodayActivities()
+                let domains = try DatabaseManager.shared.getTodayTopDomains()
 
                 // Calculate top apps
                 var appDurations: [String: Int] = [:]
@@ -292,6 +294,7 @@ class ActivityTracker: ObservableObject {
                     self?.todayScore = score
                     self?.totalDuration = total
                     self?.topApps = Array(top)
+                    self?.topDomains = domains
                 }
             } catch {
                 print("Failed to refresh stats: \(error)")

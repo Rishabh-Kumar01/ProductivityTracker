@@ -202,6 +202,26 @@ final class DatabaseManager {
         }
     }
     
+    func getTodayTopDomains(limit: Int = 3) throws -> [(domain: String, duration: Int)] {
+        try dbQueue.read { db in
+            let startOfDay = Calendar.current.startOfDay(for: Date())
+            let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: startOfDay)!
+            
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT domain, SUM(duration) as totalDuration
+                FROM activities
+                WHERE domain IS NOT NULL AND domain != '' AND startTime >= ? AND startTime < ? AND isIdle = 0
+                GROUP BY domain
+                ORDER BY totalDuration DESC
+                LIMIT ?
+                """, arguments: [startOfDay, endOfDay, limit])
+                
+            return rows.map { row in
+                (domain: row["domain"] as String, duration: row["totalDuration"] as Int)
+            }
+        }
+    }
+    
     func getDailyUsage(forBundleId bundleId: String, on date: Date = Date()) throws -> Int {
         try dbQueue.read { db in
             let startOfDay = Calendar.current.startOfDay(for: date)
