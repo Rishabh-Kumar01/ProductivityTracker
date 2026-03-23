@@ -25,37 +25,46 @@ class BlockManager: ObservableObject {
         }
     }
     
-    // Configurable blocked apps (bundle IDs) and websites (domains)
+    // Configurable blocked apps (bundle IDs)
     @Published var blockedBundleIds: Set<String> = [
         "com.apple.Music",
         "com.spotify.client",
         "com.apple.TV"
-        // Add more default or loaded block items here
-    ]
-    
-    @Published var blockedWebsites: Set<String> = [
-        "twitter.com",
-        "www.twitter.com",
-        "x.com",
-        "www.x.com",
-        "facebook.com",
-        "www.facebook.com",
-        "instagram.com",
-        "www.instagram.com",
-        "reddit.com",
-        "www.reddit.com",
-        "tiktok.com",
-        "www.tiktok.com",
-        "netflix.com",
-        "www.netflix.com"
     ]
     
     private var workspaceCancellable: AnyCancellable?
+    private var tempUnblockTimer: Timer?
     
     private init() {
         self.isBlockingActive = UserDefaults.standard.bool(forKey: "isBlockingActive")
         if self.isBlockingActive {
             self.activateBlocking()
+        }
+        
+        // Start temp unblock check timer
+        tempUnblockTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.checkExpiredUnblocks()
+        }
+    }
+    
+    private func checkExpiredUnblocks() {
+        guard isBlockingActive else { return }
+        do {
+            let didClear = try DatabaseManager.shared.clearExpiredTempUnblocks()
+            if didClear {
+                print("[BlockManager] Temporary unblocks expired. Reapplying blocklist.")
+                applyBlockList()
+            }
+        } catch {
+            print("[BlockManager] Failed to clear expired unblocks: \(error)")
+        }
+    }
+    
+    // MARK: - API
+    
+    func applyBlockList() {
+        if isBlockingActive {
+            updateHostsFile(block: true)
         }
     }
     
@@ -105,33 +114,47 @@ class BlockManager: ObservableObject {
     // MARK: - Website Blocking (/etc/hosts)
     
     private func updateHostsFile(block: Bool) {
-        let markerPrefix = "# ProductivityTracker Block"
-        let markerSuffix = "# End ProductivityTracker Block"
+        let markerPrefix = "# ===== PRODUCTIVITYTRACKER-BLOCK-START ====="
+        let markerSuffix = "# ===== PRODUCTIVITYTRACKER-BLOCK-END ====="
         
         var shellScript = ""
         
         if block {
-            var hostsContent = "\\n" + markerPrefix + "\\n"
-            for site in blockedWebsites {
-                hostsContent += "0.0.0.0 " + site + "\\n"
-                hostsContent += "::1 " + site + "\\n"
+            let domains: [String]
+            do {
+                domains = try DatabaseManager.shared.getActiveBlockedDomains()
+            } catch {
+                print("Failed to read blocked domains: \(error)")
+                domains = []
             }
-            hostsContent += markerSuffix + "\\n"
             
-            shellScript = #"""
+            var hostsContent = "\n" + markerPrefix + "\n"
+            for site in domains {
+                // Ensure no malformed newlines or quotes in domain
+                let cleanSite = site.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\"", with: "")
+                if cleanSite.isEmpty { continue }
+                
+                hostsContent += "0.0.0.0 " + cleanSite + "\n"
+                hostsContent += "0.0.0.0 www." + cleanSite + "\n"
+                hostsContent += "::1 " + cleanSite + "\n"
+                hostsContent += "::1 www." + cleanSite + "\n"
+            }
+            hostsContent += markerSuffix + "\n"
+            
+            shellScript = """
             #!/bin/sh
-            sed -i '' '/\#(markerPrefix)/,/\#(markerSuffix)/d' /etc/hosts
-            echo "\#(hostsContent)" >> /etc/hosts
+            sed -i '' '/\(markerPrefix)/,/\(markerSuffix)/d' /etc/hosts
+            echo "\(hostsContent)" >> /etc/hosts
             dscacheutil -flushcache
             killall -HUP mDNSResponder
-            """#
+            """
         } else {
-            shellScript = #"""
+            shellScript = """
             #!/bin/sh
-            sed -i '' '/\#(markerPrefix)/,/\#(markerSuffix)/d' /etc/hosts
+            sed -i '' '/\(markerPrefix)/,/\(markerSuffix)/d' /etc/hosts
             dscacheutil -flushcache
             killall -HUP mDNSResponder
-            """#
+            """
         }
         
         // Write the script to a temporary file
@@ -141,13 +164,15 @@ class BlockManager: ObservableObject {
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tempScriptURL.path)
             
             // Execute the script via privileged AppleScript
-            let appleScriptCode = #"do shell script "\#(tempScriptURL.path)" with administrator privileges"#
+            let appleScriptCode = """
+            do shell script "\(tempScriptURL.path)" with administrator privileges
+            """
             
             var errorInfo: NSDictionary?
             if let script = NSAppleScript(source: appleScriptCode) {
                 let _ = script.executeAndReturnError(&errorInfo)
                 if let errorDesc = errorInfo {
-                    print("Hosts file modification error: \\(errorDesc)")
+                    print("Hosts file modification error: \(errorDesc)")
                 } else {
                     print("Hosts file updated successfully. Block: " + String(block))
                 }

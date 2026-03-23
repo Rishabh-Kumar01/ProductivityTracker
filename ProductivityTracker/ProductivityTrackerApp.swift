@@ -25,6 +25,7 @@ struct ProductivityTrackerApp: App {
         // Start syncing data to cloud if logged in
         if AuthManager.shared.isLoggedIn {
             SyncManager.shared.startSync()
+            BlocklistSyncManager.shared.start()
         }
         
         // Watch for login state changes to start/stop sync
@@ -34,6 +35,7 @@ struct ProductivityTrackerApp: App {
             queue: .main
         ) { _ in
             SyncManager.shared.startSync()
+            BlocklistSyncManager.shared.start()
         }
         
         NotificationCenter.default.addObserver(
@@ -42,6 +44,7 @@ struct ProductivityTrackerApp: App {
             queue: .main
         ) { _ in
             SyncManager.shared.stopSync()
+            BlocklistSyncManager.shared.stop()
         }
     }
 

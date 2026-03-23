@@ -42,6 +42,29 @@ struct CategoryRule: Codable, FetchableRecord, PersistableRecord, Identifiable {
     static let databaseTableName = "category_rules"
 }
 
+// MARK: - Blocker Models
+
+struct BlockedDomain: Codable, FetchableRecord, PersistableRecord, Identifiable {
+    var id: String
+    var domain: String
+    var source: String
+    var tempUnblockUntil: Date?
+    var addedAt: Date?
+    
+    static let databaseTableName = "blocked_domains"
+}
+
+struct BlocklistSource: Codable, FetchableRecord, PersistableRecord, Identifiable {
+    var id: String
+    var name: String
+    var url: String?
+    var domainCount: Int = 0
+    var lastUpdated: Date?
+    var isEnabled: Bool = true
+    
+    static let databaseTableName = "blocklist_sources"
+}
+
 // MARK: - Database Manager
 
 final class DatabaseManager {
@@ -119,6 +142,26 @@ final class DatabaseManager {
         migrator.registerMigration("v4-domain") { db in
             try db.alter(table: "activities") { t in
                 t.add(column: "domain", .text)
+            }
+        }
+
+        migrator.registerMigration("v5-blocklist") { db in
+            try db.create(table: "blocked_domains") { t in
+                t.column("id", .text).primaryKey()
+                t.column("domain", .text).notNull()
+                t.column("source", .text).notNull().defaults(to: "manual")
+                t.column("tempUnblockUntil", .datetime)
+                t.column("addedAt", .datetime).defaults(sql: "CURRENT_TIMESTAMP")
+            }
+            try db.create(index: "idx_blocked_domain", on: "blocked_domains", columns: ["domain"], unique: true)
+
+            try db.create(table: "blocklist_sources") { t in
+                t.column("id", .text).primaryKey()
+                t.column("name", .text).notNull().unique()
+                t.column("url", .text)
+                t.column("domainCount", .integer).defaults(to: 0)
+                t.column("lastUpdated", .datetime)
+                t.column("isEnabled", .boolean).defaults(to: true)
             }
         }
 
@@ -339,5 +382,39 @@ final class DatabaseManager {
             // Scale: 0 = all very distracting, 50 = all neutral, 100 = all very productive
             return (weightedSum / (Double(totalDuration) * 4.0)) * 100.0
         }
+    }
+
+    // MARK: - Blocklist Data Access
+    
+    func replaceBlockedDomains(_ domains: [BlockedDomain]) throws {
+        _ = try dbQueue.write { db in
+            try BlockedDomain.deleteAll(db)
+            for domain in domains {
+                var d = domain
+                try d.insert(db)
+            }
+        }
+    }
+    
+    func getActiveBlockedDomains() throws -> [String] {
+        try dbQueue.read { db in
+            let now = Date()
+            let records = try BlockedDomain
+                .filter(Column("tempUnblockUntil") == nil || Column("tempUnblockUntil") < now)
+                .fetchAll(db)
+            return records.map { $0.domain }
+        }
+    }
+    
+    func clearExpiredTempUnblocks() throws -> Bool {
+        var didClear = false
+        _ = try dbQueue.write { db in
+            let now = Date()
+            let expiredCount = try BlockedDomain
+                .filter(Column("tempUnblockUntil") != nil && Column("tempUnblockUntil") < now)
+                .updateAll(db, Column("tempUnblockUntil").set(to: NSNull()))
+            didClear = expiredCount > 0
+        }
+        return didClear
     }
 }
