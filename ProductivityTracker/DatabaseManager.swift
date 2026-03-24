@@ -396,6 +396,19 @@ final class DatabaseManager {
         }
     }
     
+    func insertBlockedDomain(domain: String, source: String) throws {
+        _ = try dbQueue.write { db in
+            var record = BlockedDomain(
+                id: UUID().uuidString,
+                domain: domain,
+                source: source,
+                tempUnblockUntil: nil,
+                addedAt: Date()
+            )
+            try record.insert(db, onConflict: .ignore)
+        }
+    }
+    
     func getActiveBlockedDomains() throws -> [String] {
         try dbQueue.read { db in
             let now = Date()

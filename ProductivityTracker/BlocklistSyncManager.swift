@@ -33,8 +33,7 @@ class BlocklistSyncManager: ObservableObject {
     }
     
     func syncNow() {
-        guard let token = KeychainHelper.standard.read(service: "com.productivitytracker", account: "accessToken"),
-              !token.isEmpty else {
+        guard AuthManager.shared.isLoggedIn else {
             DispatchQueue.main.async { self.lastSyncStatus = "Not logged in" }
             return
         }
@@ -45,9 +44,8 @@ class BlocklistSyncManager: ObservableObject {
         // Fetch all blocked domains in one go using large limit
         guard let url = URL(string: "\(apiBaseURL)/blocker/domains?limit=500000") else { return }
         
-        var request = URLRequest(url: url)
+        var request = AuthManager.shared.authenticatedRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in

@@ -110,9 +110,14 @@ struct BlockingSettingsView: View {
             
             Text("Blocked Websites")
                 .font(.headline)
-            List(Array(blockManager.blockedWebsites), id: \.self) { url in
-                Text(url)
+            Text("Website blocks are now managed via the Web Dashboard.")
+                .foregroundColor(.secondary)
+            Button("Open Blocker Dashboard") {
+                if let url = URL(string: "http://localhost:5173/blocker") {
+                    NSWorkspace.shared.open(url)
+                }
             }
+            .padding(.top, 5)
         }
     }
 }

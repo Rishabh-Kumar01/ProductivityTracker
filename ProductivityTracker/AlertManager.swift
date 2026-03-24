@@ -120,7 +120,12 @@ class AlertManager: ObservableObject {
                                 if rule.matchType == "app" {
                                     BlockManager.shared.blockedBundleIds.insert(rule.pattern)
                                 } else if rule.matchType == "domain" {
-                                    BlockManager.shared.blockedWebsites.insert(rule.pattern)
+                                    do {
+                                        try DatabaseManager.shared.insertBlockedDomain(domain: rule.pattern, source: "auto_block")
+                                        BlockManager.shared.applyBlockList()
+                                    } catch {
+                                        print("Failed to auto-block domain: \(error)")
+                                    }
                                 }
                                 BlockManager.shared.isBlockingActive = true // Ensure blocking is ON
                             }
