@@ -8,6 +8,7 @@
 import AppKit
 import Foundation
 import Combine
+import ServiceManagement
 
 // MARK: - Block Manager
 
@@ -32,11 +33,20 @@ class BlockManager: ObservableObject {
         "com.apple.TV"
     ]
     
+    @Published var helperInstalled: Bool = false
+    
     private var workspaceCancellable: AnyCancellable?
     private var tempUnblockTimer: Timer?
+    private var xpcConnection: NSXPCConnection?
+    
+    private let helperMachServiceName = "com.rishabh.productivitytracker.helper"
     
     private init() {
         self.isBlockingActive = UserDefaults.standard.bool(forKey: "isBlockingActive")
+        
+        // Check helper status
+        checkHelperStatus()
+        
         if self.isBlockingActive {
             self.activateBlocking()
         }
@@ -46,6 +56,99 @@ class BlockManager: ObservableObject {
             self?.checkExpiredUnblocks()
         }
     }
+    
+    // MARK: - Helper Installation
+    
+    func installHelper() {
+        let daemon = SMAppService.daemon(plistName: "com.rishabh.productivitytracker.helper.plist")
+        do {
+            try daemon.register()
+            DispatchQueue.main.async {
+                self.helperInstalled = true
+            }
+            print("[BlockManager] Helper daemon registered successfully")
+        } catch {
+            print("[BlockManager] Failed to register helper daemon: \(error)")
+            print("[BlockManager] Falling back to AppleScript approach")
+        }
+    }
+    
+    func checkHelperStatus() {
+        let daemon = SMAppService.daemon(plistName: "com.rishabh.productivitytracker.helper.plist")
+        DispatchQueue.main.async {
+            self.helperInstalled = (daemon.status == .enabled)
+        }
+    }
+    
+    // MARK: - XPC Connection
+    
+    private func getHelperProxy() -> HostsHelperProtocol? {
+        if xpcConnection == nil {
+            let connection = NSXPCConnection(machServiceName: helperMachServiceName, options: .privileged)
+            connection.remoteObjectInterface = NSXPCInterface(with: HostsHelperProtocol.self)
+            
+            connection.invalidationHandler = { [weak self] in
+                self?.xpcConnection = nil
+                print("[BlockManager] XPC connection invalidated")
+            }
+            connection.interruptionHandler = { [weak self] in
+                self?.xpcConnection = nil
+                print("[BlockManager] XPC connection interrupted")
+            }
+            
+            connection.resume()
+            xpcConnection = connection
+        }
+        
+        return xpcConnection?.remoteObjectProxyWithErrorHandler { error in
+            print("[BlockManager] XPC proxy error: \(error)")
+        } as? HostsHelperProtocol
+    }
+    
+    // MARK: - API
+    
+    func applyBlockList() {
+        guard isBlockingActive else { return }
+        
+        let domains: [String]
+        do {
+            domains = try DatabaseManager.shared.getActiveBlockedDomains()
+        } catch {
+            print("[BlockManager] Failed to read blocked domains: \(error)")
+            return
+        }
+        
+        guard !domains.isEmpty else {
+            print("[BlockManager] No domains to block")
+            return
+        }
+        
+        // Try XPC first, fall back to AppleScript
+        if helperInstalled, let proxy = getHelperProxy() {
+            proxy.updateBlockedDomains(domains) { success, error in
+                if success {
+                    print("[BlockManager] Applied \(domains.count) domains via XPC helper")
+                } else {
+                    print("[BlockManager] XPC helper failed: \(error ?? "unknown"). Falling back to AppleScript.")
+                    self.updateHostsViaAppleScript(domains: domains, block: true)
+                }
+            }
+        } else {
+            updateHostsViaAppleScript(domains: domains, block: true)
+        }
+    }
+    
+    func getHostsHash(completion: @escaping (String) -> Void) {
+        if let proxy = getHelperProxy() {
+            proxy.getHostsFileHash { hash in
+                completion(hash)
+            }
+        } else {
+            completion("unavailable")
+        }
+    }
+    
+    // MARK: - Temp Unblock Timer
     
     private func checkExpiredUnblocks() {
         guard isBlockingActive else { return }
@@ -57,14 +160,6 @@ class BlockManager: ObservableObject {
             }
         } catch {
             print("[BlockManager] Failed to clear expired unblocks: \(error)")
-        }
-    }
-    
-    // MARK: - API
-    
-    func applyBlockList() {
-        if isBlockingActive {
-            updateHostsFile(block: true)
         }
     }
     
@@ -87,8 +182,8 @@ class BlockManager: ObservableObject {
                 }
             }
         
-        // 3. Block websites via /etc/hosts
-        updateHostsFile(block: true)
+        // 3. Block websites
+        applyBlockList()
     }
     
     private func deactivateBlocking() {
@@ -96,7 +191,16 @@ class BlockManager: ObservableObject {
         workspaceCancellable = nil
         
         // Unblock websites
-        updateHostsFile(block: false)
+        if helperInstalled, let proxy = getHelperProxy() {
+            proxy.removeAllBlocks { success in
+                if success {
+                    print("[BlockManager] Removed all blocks via XPC helper")
+                    proxy.flushDNS { _ in }
+                }
+            }
+        } else {
+            updateHostsViaAppleScript(domains: [], block: false)
+        }
     }
     
     // MARK: - App Blocking
@@ -111,26 +215,17 @@ class BlockManager: ObservableObject {
         }
     }
     
-    // MARK: - Website Blocking (/etc/hosts)
+    // MARK: - AppleScript Fallback (used when helper is not installed)
     
-    private func updateHostsFile(block: Bool) {
+    private func updateHostsViaAppleScript(domains: [String], block: Bool) {
         let markerPrefix = "# ===== PRODUCTIVITYTRACKER-BLOCK-START ====="
         let markerSuffix = "# ===== PRODUCTIVITYTRACKER-BLOCK-END ====="
         
         var shellScript = ""
         
-        if block {
-            let domains: [String]
-            do {
-                domains = try DatabaseManager.shared.getActiveBlockedDomains()
-            } catch {
-                print("Failed to read blocked domains: \(error)")
-                domains = []
-            }
-            
+        if block && !domains.isEmpty {
             var hostsContent = "\n" + markerPrefix + "\n"
             for site in domains {
-                // Ensure no malformed newlines or quotes in domain
                 let cleanSite = site.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\"", with: "")
                 if cleanSite.isEmpty { continue }
                 
@@ -174,11 +269,11 @@ class BlockManager: ObservableObject {
                 if let errorDesc = errorInfo {
                     print("Hosts file modification error: \(errorDesc)")
                 } else {
-                    print("Hosts file updated successfully. Block: " + String(block))
+                    print("Hosts file updated successfully (AppleScript fallback). Block: " + String(block))
                 }
             }
         } catch {
-            print("Failed to write temporary script: \\(error)")
+            print("Failed to write temporary script: \(error)")
         }
     }
 }
