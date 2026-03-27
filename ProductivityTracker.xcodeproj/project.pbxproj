@@ -7,23 +7,82 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		185C20612F7702AB00DD0C83 /* ProductivityTrackerHelper in CopyFiles */ = {isa = PBXBuildFile; fileRef = 185C20522F76F86800DD0C83 /* ProductivityTrackerHelper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		187CE0992F6D947F000341AC /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 187CE0982F6D947F000341AC /* GRDB */; };
 		187CE09C2F6D94A6000341AC /* KeychainAccess in Frameworks */ = {isa = PBXBuildFile; productRef = 187CE09B2F6D94A6000341AC /* KeychainAccess */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		185C20502F76F86800DD0C83 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = /usr/share/man/man1/;
+			dstSubfolderSpec = 0;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 1;
+		};
+		185C20602F77028200DD0C83 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 6;
+			files = (
+				185C20612F7702AB00DD0C83 /* ProductivityTrackerHelper in CopyFiles */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		185C20522F76F86800DD0C83 /* ProductivityTrackerHelper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ProductivityTrackerHelper; sourceTree = BUILT_PRODUCTS_DIR; };
 		187CE0892F6BE273000341AC /* ProductivityTracker.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ProductivityTracker.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		185C205D2F76FC3E00DD0C83 /* Exceptions for "ProductivityTracker" folder in "ProductivityTrackerHelper" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				HostsHelperProtocol.swift,
+			);
+			target = 185C20512F76F86800DD0C83 /* ProductivityTrackerHelper */;
+		};
+		185C205F2F7701F900DD0C83 /* Exceptions for "ProductivityTrackerHelper" folder in "ProductivityTracker" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				com.rishabh.productivitytracker.helper.plist,
+			);
+			target = 187CE0882F6BE273000341AC /* ProductivityTracker */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		185C20532F76F86800DD0C83 /* ProductivityTrackerHelper */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				185C205F2F7701F900DD0C83 /* Exceptions for "ProductivityTrackerHelper" folder in "ProductivityTracker" target */,
+			);
+			path = ProductivityTrackerHelper;
+			sourceTree = "<group>";
+		};
 		187CE08B2F6BE273000341AC /* ProductivityTracker */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				185C205D2F76FC3E00DD0C83 /* Exceptions for "ProductivityTracker" folder in "ProductivityTrackerHelper" target */,
+			);
 			path = ProductivityTracker;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		185C204F2F76F86800DD0C83 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		187CE0862F6BE273000341AC /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -40,6 +99,7 @@
 			isa = PBXGroup;
 			children = (
 				187CE08B2F6BE273000341AC /* ProductivityTracker */,
+				185C20532F76F86800DD0C83 /* ProductivityTrackerHelper */,
 				187CE08A2F6BE273000341AC /* Products */,
 			);
 			sourceTree = "<group>";
@@ -48,6 +108,7 @@
 			isa = PBXGroup;
 			children = (
 				187CE0892F6BE273000341AC /* ProductivityTracker.app */,
+				185C20522F76F86800DD0C83 /* ProductivityTrackerHelper */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -55,6 +116,28 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		185C20512F76F86800DD0C83 /* ProductivityTrackerHelper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 185C20582F76F86800DD0C83 /* Build configuration list for PBXNativeTarget "ProductivityTrackerHelper" */;
+			buildPhases = (
+				185C204E2F76F86800DD0C83 /* Sources */,
+				185C204F2F76F86800DD0C83 /* Frameworks */,
+				185C20502F76F86800DD0C83 /* CopyFiles */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				185C20532F76F86800DD0C83 /* ProductivityTrackerHelper */,
+			);
+			name = ProductivityTrackerHelper;
+			packageProductDependencies = (
+			);
+			productName = ProductivityTrackerHelper;
+			productReference = 185C20522F76F86800DD0C83 /* ProductivityTrackerHelper */;
+			productType = "com.apple.product-type.tool";
+		};
 		187CE0882F6BE273000341AC /* ProductivityTracker */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 187CE0942F6BE274000341AC /* Build configuration list for PBXNativeTarget "ProductivityTracker" */;
@@ -62,6 +145,7 @@
 				187CE0852F6BE273000341AC /* Sources */,
 				187CE0862F6BE273000341AC /* Frameworks */,
 				187CE0872F6BE273000341AC /* Resources */,
+				185C20602F77028200DD0C83 /* CopyFiles */,
 			);
 			buildRules = (
 			);
@@ -89,6 +173,9 @@
 				LastSwiftUpdateCheck = 2620;
 				LastUpgradeCheck = 2620;
 				TargetAttributes = {
+					185C20512F76F86800DD0C83 = {
+						CreatedOnToolsVersion = 26.2;
+					};
 					187CE0882F6BE273000341AC = {
 						CreatedOnToolsVersion = 26.2;
 					};
@@ -113,6 +200,7 @@
 			projectRoot = "";
 			targets = (
 				187CE0882F6BE273000341AC /* ProductivityTracker */,
+				185C20512F76F86800DD0C83 /* ProductivityTrackerHelper */,
 			);
 		};
 /* End PBXProject section */
@@ -128,6 +216,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		185C204E2F76F86800DD0C83 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		187CE0852F6BE273000341AC /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -138,6 +233,35 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
+		185C20562F76F86800DD0C83 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = V7TM6D533Z;
+				ENABLE_HARDENED_RUNTIME = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rishabh.productivitytracker.helper;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		185C20572F76F86800DD0C83 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = V7TM6D533Z;
+				ENABLE_HARDENED_RUNTIME = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rishabh.productivitytracker.helper;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 		187CE0922F6BE274000341AC /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -339,6 +463,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		185C20582F76F86800DD0C83 /* Build configuration list for PBXNativeTarget "ProductivityTrackerHelper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				185C20562F76F86800DD0C83 /* Debug */,
+				185C20572F76F86800DD0C83 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		187CE0842F6BE273000341AC /* Build configuration list for PBXProject "ProductivityTracker" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

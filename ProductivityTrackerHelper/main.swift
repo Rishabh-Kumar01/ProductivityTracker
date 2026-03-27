@@ -2,8 +2,8 @@
 //  main.swift
 //  ProductivityTrackerHelper
 //
-//  LaunchDaemon entry point. Listens for XPC connections from the main app
-//  and handles /etc/hosts modifications with root privileges.
+//  LaunchDaemon entry point. Listens for XPC connections
+//  from the main app and handles /etc/hosts modifications.
 //
 
 import Foundation
@@ -11,37 +11,28 @@ import Foundation
 // MARK: - XPC Service Delegate
 
 class HelperDelegate: NSObject, NSXPCListenerDelegate {
-    func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
+    func listener(_ listener: NSXPCListener,
+                  shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
         newConnection.exportedInterface = NSXPCInterface(with: HostsHelperProtocol.self)
-        newConnection.exportedObject = HelperService()
-        
-        newConnection.invalidationHandler = {
-            NSLog("[Helper] Connection invalidated")
-        }
-        newConnection.interruptionHandler = {
-            NSLog("[Helper] Connection interrupted")
-        }
-        
+        newConnection.exportedObject = HelperHandler()
         newConnection.resume()
-        NSLog("[Helper] Accepted new XPC connection")
         return true
     }
 }
 
 // MARK: - Protocol Implementation
 
-class HelperService: NSObject, HostsHelperProtocol {
+class HelperHandler: NSObject, HostsHelperProtocol {
     
-    func updateBlockedDomains(_ domains: [String], reply: @escaping (Bool, String?) -> Void) {
-        NSLog("[Helper] Updating \(domains.count) blocked domains")
+    func updateBlockedDomains(_ domains: [String],
+                              reply: @escaping (Bool, String?) -> Void) {
         do {
             try HostsFileManager.updateBlockedDomains(domains)
-            _ = HostsFileManager.flushDNSCache()
-            let hash = HostsFileManager.getBlockSectionHash()
-            NSLog("[Helper] Hosts updated, hash: \(hash)")
+            let _ = HostsFileManager.flushDNSCache()
+            NSLog("[Helper] Updated \(domains.count) domains in /etc/hosts")
             reply(true, nil)
         } catch {
-            NSLog("[Helper] Error updating hosts: \(error)")
+            NSLog("[Helper] Failed to update domains: \(error)")
             reply(false, error.localizedDescription)
         }
     }
@@ -57,29 +48,30 @@ class HelperService: NSObject, HostsHelperProtocol {
     }
     
     func removeAllBlocks(reply: @escaping (Bool) -> Void) {
-        NSLog("[Helper] Removing all blocks")
         do {
             try HostsFileManager.removeAllBlocks()
-            _ = HostsFileManager.flushDNSCache()
+            let _ = HostsFileManager.flushDNSCache()
+            NSLog("[Helper] Removed all blocks from /etc/hosts")
             reply(true)
         } catch {
-            NSLog("[Helper] Error removing blocks: \(error)")
+            NSLog("[Helper] Failed to remove blocks: \(error)")
             reply(false)
         }
     }
     
     func flushDNS(reply: @escaping (Bool) -> Void) {
-        let result = HostsFileManager.flushDNSCache()
-        reply(result)
+        let success = HostsFileManager.flushDNSCache()
+        reply(success)
     }
 }
 
-// MARK: - Entry Point
+// MARK: - Main
 
 let delegate = HelperDelegate()
 let listener = NSXPCListener(machServiceName: "com.rishabh.productivitytracker.helper")
 listener.delegate = delegate
 listener.resume()
 
-NSLog("[Helper] ProductivityTrackerHelper started, listening for XPC connections")
+NSLog("[Helper] ProductivityTrackerHelper daemon started, listening for XPC connections...")
+
 RunLoop.current.run()
