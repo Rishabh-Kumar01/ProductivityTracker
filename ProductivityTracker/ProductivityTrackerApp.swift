@@ -26,6 +26,8 @@ struct ProductivityTrackerApp: App {
         if AuthManager.shared.isLoggedIn {
             SyncManager.shared.startSync()
             BlocklistSyncManager.shared.start()
+            AccountabilityManager.shared.checkStatus()
+            HeartbeatManager.shared.start()
         }
         
         // Watch for login state changes to start/stop sync
@@ -36,6 +38,8 @@ struct ProductivityTrackerApp: App {
         ) { _ in
             SyncManager.shared.startSync()
             BlocklistSyncManager.shared.start()
+            AccountabilityManager.shared.checkStatus()
+            HeartbeatManager.shared.start()
         }
         
         NotificationCenter.default.addObserver(
@@ -45,6 +49,16 @@ struct ProductivityTrackerApp: App {
         ) { _ in
             SyncManager.shared.stopSync()
             BlocklistSyncManager.shared.stop()
+            AccountabilityManager.shared.checkStatus()
+            HeartbeatManager.shared.stop()
+        }
+        
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            HeartbeatManager.shared.sendHeartbeat(isTerminating: true)
         }
     }
 
