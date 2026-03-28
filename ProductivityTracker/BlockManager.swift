@@ -142,7 +142,7 @@ class BlockManager: ObservableObject {
     }
     
     func getHostsHash(completion: @escaping (String) -> Void) {
-        if let proxy = getHelperProxy() {
+        if helperInstalled, let proxy = getHelperProxy() {
             proxy.getHostsFileHash { hash in
                 completion(hash)
             }
