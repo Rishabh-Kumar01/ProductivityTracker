@@ -17,6 +17,7 @@ class BlockManager: ObservableObject {
     
     @Published var isBlockingActive: Bool = false {
         didSet {
+            guard oldValue != isBlockingActive else { return }
             UserDefaults.standard.set(isBlockingActive, forKey: "isBlockingActive")
             if isBlockingActive {
                 activateBlocking()
@@ -42,13 +43,15 @@ class BlockManager: ObservableObject {
     private let helperMachServiceName = "com.rishabh.productivitytracker.helper"
     
     private init() {
-        self.isBlockingActive = UserDefaults.standard.bool(forKey: "isBlockingActive")
-        
         // Check helper status
         checkHelperStatus()
         
-        if self.isBlockingActive {
-            self.activateBlocking()
+        // Delay state restoration and activation to the next runloop.
+        // This prevents the synchronous AppleScript execution from pumping the runloop 
+        // while BlockManager.shared is still initializing, which causes an EXC_BREAKPOINT.
+        DispatchQueue.main.async {
+            self.isBlockingActive = UserDefaults.standard.bool(forKey: "isBlockingActive")
+            // The didSet of isBlockingActive will automatically call activateBlocking() if true.
         }
         
         // Start temp unblock check timer
