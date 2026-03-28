@@ -18,7 +18,7 @@ class AuthManager: ObservableObject {
     @Published var userEmail: String?
 
     private let keychain = Keychain(service: "com.rishabh.ProductivityTracker")
-    private let baseURL = "http://localhost:3000/api"
+    private let baseURL = APIConfig.baseURL
 
     private var accessToken: String? {
         get { try? keychain.get("accessToken") }

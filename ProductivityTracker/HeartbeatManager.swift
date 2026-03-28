@@ -9,7 +9,7 @@ class HeartbeatManager {
     static let shared = HeartbeatManager()
     
     private var timer: Timer?
-    private let apiBaseURL = "http://localhost:3000/api"
+    private let apiBaseURL = APIConfig.baseURL
     
     private init() {}
     

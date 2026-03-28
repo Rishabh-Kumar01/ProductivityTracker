@@ -60,7 +60,7 @@ class AlertManager: ObservableObject {
     }
     
     func fetchRules() {
-        guard let url = URL(string: "http://localhost:3000/api/alerts") else { return }
+        guard let url = URL(string: "\(APIConfig.baseURL)/alerts") else { return }
         let request = AuthManager.shared.authenticatedRequest(url: url)
         
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in

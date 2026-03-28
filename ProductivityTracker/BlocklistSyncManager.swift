@@ -13,7 +13,7 @@ class BlocklistSyncManager: ObservableObject {
     @Published var isSyncing: Bool = false
     
     private var timer: Timer?
-    private let apiBaseURL = "http://localhost:3000/api"
+    private let apiBaseURL = APIConfig.baseURL
     
     private init() {}
     

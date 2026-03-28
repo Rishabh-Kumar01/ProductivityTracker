@@ -67,7 +67,7 @@ class TamperMonitor: ObservableObject {
         }
         
         // 3. Inform Backend
-        guard let url = URL(string: "http://localhost:3000/api/accountability/tamper-event") else { return }
+        guard let url = URL(string: "\(APIConfig.baseURL)/accountability/tamper-event") else { return }
         var request = AuthManager.shared.authenticatedRequest(url: url)
         request.httpMethod = "POST"
         

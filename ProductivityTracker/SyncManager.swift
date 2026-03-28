@@ -13,7 +13,7 @@ class SyncManager {
     static let shared = SyncManager()
 
     private var syncTimer: Timer?
-    private let baseURL = "http://localhost:3000/api"
+    private let baseURL = APIConfig.baseURL
 
     private init() {}
 

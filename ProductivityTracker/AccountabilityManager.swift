@@ -12,7 +12,7 @@ class AccountabilityManager: ObservableObject {
     @Published var isAccountabilityActive: Bool = false
     @Published var partnerEmail: String?
     
-    private let apiBaseURL = "http://localhost:3000/api"
+    private let apiBaseURL = APIConfig.baseURL
     
     private init() {}
     
