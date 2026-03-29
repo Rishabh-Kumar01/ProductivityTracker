@@ -108,8 +108,8 @@ class BlocklistSyncManager: ObservableObject {
                     
                     try DatabaseManager.shared.replaceBlockedDomains(newRecords)
                     
-                    // After updating database, apply the blocks immediately!
-                    BlockManager.shared.applyBlockList()
+                    // After updating database, apply blocks only if content changed
+                    BlockManager.shared.applyBlockListIfChanged()
                     
                     let now = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
                     DispatchQueue.main.async {
