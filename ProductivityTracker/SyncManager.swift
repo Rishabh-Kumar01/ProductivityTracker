@@ -19,6 +19,10 @@ class SyncManager {
 
     func startSync() {
         guard syncTimer == nil else { return }
+
+        // Recovery: reset any records stuck with isSyncing=true from a previous crash/failure
+        try? DatabaseManager.shared.resetStuckSyncingRecords()
+
         // Sync every 10 seconds for testing
         syncTimer = Timer.scheduledTimer(
             withTimeInterval: 10,
@@ -41,17 +45,18 @@ class SyncManager {
         guard AuthManager.shared.isLoggedIn else { return }
 
         Task {
+            var syncingIds: [String] = []
             do {
                 // 1. Fetch unsynced records (WHERE isSynced=false AND isSyncing=false)
                 let records = try DatabaseManager.shared.getUnsyncedActivities(limit: 100)
                 guard !records.isEmpty else { return }
 
-                let ids = records.map { $0.id }
-                
+                syncingIds = records.map { $0.id }
+
                 // 2. Atomically mark as syncing BEFORE the POST
                 //    This prevents the next sync cycle from re-fetching these records
-                try DatabaseManager.shared.markAsSyncing(ids: ids)
-                
+                try DatabaseManager.shared.markAsSyncing(ids: syncingIds)
+
                 print("[Sync] Found \(records.count) unsynced activities, uploading...")
 
                 // 3. Convert to JSON payload
@@ -83,10 +88,10 @@ class SyncManager {
 
                 let (responseData, response) = try await URLSession.shared.data(for: request)
                 guard let httpResponse = response as? HTTPURLResponse else {
-                    try DatabaseManager.shared.markAsSyncFailed(ids: ids)
+                    try DatabaseManager.shared.markAsSyncFailed(ids: syncingIds)
                     return
                 }
-                
+
                 print("[Sync] Server responded with status: \(httpResponse.statusCode)")
 
                 if httpResponse.statusCode == 401 {
@@ -101,31 +106,34 @@ class SyncManager {
 
                     let (_, retryResponse) = try await URLSession.shared.data(for: request)
                     guard let retryHttp = retryResponse as? HTTPURLResponse else {
-                        try DatabaseManager.shared.markAsSyncFailed(ids: ids)
+                        try DatabaseManager.shared.markAsSyncFailed(ids: syncingIds)
                         return
                     }
-                    
+
                     if retryHttp.statusCode == 201 {
-                        try DatabaseManager.shared.markAsSynced(ids: ids)
-                        print("[Sync] Synced \(ids.count) activities after token refresh")
+                        try DatabaseManager.shared.markAsSynced(ids: syncingIds)
+                        print("[Sync] Synced \(syncingIds.count) activities after token refresh")
                     } else {
                         print("[Sync] Retry failed with status: \(retryHttp.statusCode)")
-                        try DatabaseManager.shared.markAsSyncFailed(ids: ids)
+                        try DatabaseManager.shared.markAsSyncFailed(ids: syncingIds)
                     }
                 } else if httpResponse.statusCode == 201 {
                     // 5. Success — mark as synced
-                    try DatabaseManager.shared.markAsSynced(ids: ids)
-                    print("[Sync] Successfully synced \(ids.count) activities")
+                    try DatabaseManager.shared.markAsSynced(ids: syncingIds)
+                    print("[Sync] Successfully synced \(syncingIds.count) activities")
                 } else {
                     // Unexpected response — revert isSyncing so they retry
                     if let body = String(data: responseData, encoding: .utf8) {
                         print("[Sync] Unexpected response (\(httpResponse.statusCode)): \(body)")
                     }
-                    try DatabaseManager.shared.markAsSyncFailed(ids: ids)
+                    try DatabaseManager.shared.markAsSyncFailed(ids: syncingIds)
                 }
 
             } catch {
-                // Handle offline gracefully — just skip, retry next cycle
+                // Reset isSyncing so these records retry next cycle
+                if !syncingIds.isEmpty {
+                    try? DatabaseManager.shared.markAsSyncFailed(ids: syncingIds)
+                }
                 print("[Sync] Failed (will retry): \(error.localizedDescription)")
             }
         }

@@ -332,6 +332,18 @@ final class DatabaseManager {
         }
     }
 
+    /// Reset records stuck with isSyncing=true (from crashes or network failures)
+    func resetStuckSyncingRecords() throws {
+        let count = try dbQueue.write { db in
+            try ActivityRecord
+                .filter(Column("isSynced") == false && Column("isSyncing") == true)
+                .updateAll(db, Column("isSyncing").set(to: false))
+        }
+        if count > 0 {
+            print("[DatabaseManager] Reset \(count) stuck syncing records")
+        }
+    }
+
     // MARK: - Today Queries
 
     func getTodayActivities() throws -> [ActivityRecord] {
