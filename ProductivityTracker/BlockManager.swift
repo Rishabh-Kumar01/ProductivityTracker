@@ -51,6 +51,15 @@ class BlockManager: ObservableObject {
         checkHelperStatus()
         checkSudoersHelper()
 
+        // Update helper script if it's outdated (one-time password prompt)
+        if sudoersHelperInstalled {
+            if let installed = try? String(contentsOfFile: sudoersHelperPath, encoding: .utf8),
+               installed.trimmingCharacters(in: .whitespacesAndNewlines) != helperScriptContent.trimmingCharacters(in: .whitespacesAndNewlines) {
+                print("[BlockManager] Helper script outdated, updating...")
+                installSudoersHelper(force: true)
+            }
+        }
+
         // If XPC helper isn't available, try to install the sudoers helper (one-time password prompt)
         DispatchQueue.main.async {
             if !self.helperInstalled && !self.sudoersHelperInstalled {
@@ -175,16 +184,24 @@ class BlockManager: ObservableObject {
                     $0 == end { printing=0 }
                 ' "$HOSTS" | /usr/bin/shasum -a 256 | cut -d' ' -f1
                 ;;
+            list)
+                awk -v start="$MARKER_START" -v end="$MARKER_END" '
+                    $0 == start { printing=1; next }
+                    $0 == end { printing=0 }
+                    printing && /^0\\.0\\.0\\.0 / { print $2 }
+                ' "$HOSTS" | grep -v '^www\\.' | sort -u
+                ;;
             *)
-                echo "Usage: $0 {apply|remove|hash} [block_file]"
+                echo "Usage: $0 {apply|remove|hash|list} [block_file]"
                 exit 1
                 ;;
         esac
         """
     }
 
-    func installSudoersHelper() {
-        if FileManager.default.fileExists(atPath: sudoersHelperPath) &&
+    func installSudoersHelper(force: Bool = false) {
+        if !force &&
+           FileManager.default.fileExists(atPath: sudoersHelperPath) &&
            FileManager.default.fileExists(atPath: sudoersFilePath) {
             DispatchQueue.main.async { self.sudoersHelperInstalled = true }
             print("[BlockManager] Sudoers helper already installed")
@@ -237,9 +254,6 @@ class BlockManager: ObservableObject {
             let tempFile = FileManager.default.temporaryDirectory
                 .appendingPathComponent("productivity-blocklist.txt")
             var content = ""
-            let dateStr = ISO8601DateFormatter().string(from: Date())
-            content += "# Generated: \(dateStr)\n"
-            content += "# Domains: \(domains.count)\n"
             for domain in domains {
                 let clean = domain.trimmingCharacters(in: .whitespacesAndNewlines)
                     .replacingOccurrences(of: "\"", with: "")
@@ -333,12 +347,14 @@ class BlockManager: ObservableObject {
             proxy.updateBlockedDomains(domains) { success, error in
                 if success {
                     print("[BlockManager] Applied \(domains.count) domains via XPC helper")
+                    TamperMonitor.shared.updateExpectedHash()
                 } else {
                     print("[BlockManager] XPC failed: \(error ?? "unknown"). Trying sudoers helper.")
                     if self.sudoersHelperInstalled {
                         let ok = self.updateHostsViaSudoers(domains: domains, block: true)
                         if ok {
                             print("[BlockManager] Applied \(domains.count) domains via sudoers helper (silent)")
+                            TamperMonitor.shared.updateExpectedHash()
                         } else {
                             print("[BlockManager] Sudoers failed. Falling back to AppleScript.")
                             self.updateHostsViaAppleScript(domains: domains, block: true)
@@ -356,6 +372,7 @@ class BlockManager: ObservableObject {
             let ok = updateHostsViaSudoers(domains: domains, block: true)
             if ok {
                 print("[BlockManager] Applied \(domains.count) domains via sudoers helper (silent)")
+                TamperMonitor.shared.updateExpectedHash()
                 return
             }
             print("[BlockManager] Sudoers helper failed, falling back to AppleScript")
@@ -363,6 +380,7 @@ class BlockManager: ObservableObject {
 
         // Tier 3: AppleScript (shows password dialog)
         updateHostsViaAppleScript(domains: domains, block: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { TamperMonitor.shared.updateExpectedHash() }
     }
 
     func applyBlockListIfChanged() {
@@ -409,7 +427,41 @@ class BlockManager: ObservableObject {
         // Tier 3: No way to read hash without privileges
         completion("unavailable")
     }
-    
+
+    func getBlockedDomainsFromHosts(completion: @escaping ([String]) -> Void) {
+        guard sudoersHelperInstalled else {
+            completion([])
+            return
+        }
+
+        DispatchQueue.global(qos: .utility).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+            process.arguments = [self.sudoersHelperPath, "list"]
+
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = FileHandle.nullDevice
+
+            do {
+                try process.run()
+                process.waitUntilExit()
+
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                let output = String(data: data, encoding: .utf8) ?? ""
+                let domains = output
+                    .split(separator: "\n")
+                    .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+
+                completion(domains)
+            } catch {
+                print("[BlockManager] Failed to list hosts domains: \(error)")
+                completion([])
+            }
+        }
+    }
+
     // MARK: - Temp Unblock Timer
     
     private func checkExpiredUnblocks() {
@@ -457,6 +509,7 @@ class BlockManager: ObservableObject {
             proxy.removeAllBlocks { success in
                 if success {
                     print("[BlockManager] Removed all blocks via XPC helper")
+                    TamperMonitor.shared.updateExpectedHash()
                     proxy.flushDNS { _ in }
                 }
             }
@@ -468,12 +521,14 @@ class BlockManager: ObservableObject {
             let ok = updateHostsViaSudoers(domains: [], block: false)
             if ok {
                 print("[BlockManager] Removed all blocks via sudoers helper (silent)")
+                TamperMonitor.shared.updateExpectedHash()
                 return
             }
         }
 
         // Tier 3: AppleScript
         updateHostsViaAppleScript(domains: [], block: false)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { TamperMonitor.shared.updateExpectedHash() }
     }
     
     // MARK: - App Blocking

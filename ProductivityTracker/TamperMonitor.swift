@@ -84,24 +84,74 @@ class TamperMonitor: ObservableObject {
     }
     
     private func handleTampering() {
-        // 1. Re-apply the block list
-        BlockManager.shared.applyBlockList()
-        
-        // 2. Wait a moment then update Expected Hash (since we just rewrote it)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            self.updateExpectedHash()
+        // 1. Read current hosts file domains BEFORE re-applying
+        BlockManager.shared.getBlockedDomainsFromHosts { [weak self] currentHostsDomains in
+            guard let self = self else { return }
+
+            // 2. Get expected domains from local SQLite
+            var expectedDomains: [String] = []
+            do {
+                expectedDomains = try DatabaseManager.shared.getActiveBlockedDomains()
+            } catch {
+                print("[TamperMonitor] Failed to read expected domains: \(error)")
+            }
+
+            // 3. Compute diff
+            let currentSet = Set(currentHostsDomains.map { $0.lowercased() })
+            let expectedSet = Set(expectedDomains.map { $0.lowercased() })
+
+            let removedFromHosts = expectedSet.subtracting(currentSet)  // should be blocked but aren't
+            let addedToHosts = currentSet.subtracting(expectedSet)      // in hosts but shouldn't be
+
+            let removedArray = Array(removedFromHosts.prefix(100))
+            let addedArray = Array(addedToHosts.prefix(100))
+
+            print("[TamperMonitor] Diff — removed: \(removedFromHosts.count), added: \(addedToHosts.count)")
+            if !removedArray.isEmpty {
+                print("[TamperMonitor] Removed domains (sample): \(removedArray.prefix(5))")
+            }
+            if !addedArray.isEmpty {
+                print("[TamperMonitor] Added domains (sample): \(addedArray.prefix(5))")
+            }
+
+            // 4. Re-apply the block list (this also updates expectedHash via Part 1 fix)
+            BlockManager.shared.applyBlockList()
+
+            // 5. Update expected hash after re-apply settles
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                self.updateExpectedHash()
+            }
+
+            // 6. Report to backend with diff
+            self.reportTamperEvent(
+                removedDomains: removedArray,
+                addedDomains: addedArray,
+                removedCount: removedFromHosts.count,
+                addedCount: addedToHosts.count
+            )
         }
-        
-        // 3. Inform Backend
+    }
+
+    private func reportTamperEvent(removedDomains: [String], addedDomains: [String], removedCount: Int, addedCount: Int) {
         guard let url = URL(string: "\(APIConfig.baseURL)/accountability/tamper-event") else { return }
         var request = AuthManager.shared.authenticatedRequest(url: url)
         request.httpMethod = "POST"
-        
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body: [String: Any] = [
+            "removedDomains": removedDomains,
+            "addedDomains": addedDomains,
+            "removedCount": removedCount,
+            "addedCount": addedCount
+        ]
+
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
         URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
                 print("[TamperMonitor] Failed to report tamper event: \(error)")
             } else {
-                print("[TamperMonitor] Successfully reported tamper event to server")
+                print("[TamperMonitor] Successfully reported tamper event (removed: \(removedCount), added: \(addedCount))")
             }
         }.resume()
     }
