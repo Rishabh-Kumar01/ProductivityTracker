@@ -235,10 +235,10 @@ final class DatabaseManager {
                 WHERE startTime >= ? AND startTime < ? AND isIdle = 0
                 """, arguments: [startOfDay, endOfDay])
             
-            var avgScore = 5.0
+            var avgScore = 2.0
             if let row = scoreRow, let weightedScore: Double = row["weightedScore"], let totalDuration: Double = row["totalDuration"], totalDuration > 0 {
-                // Productivity score in DB is 0-4. Scale to 0-10
-                avgScore = (weightedScore / totalDuration) * 2.5
+                // Productivity score is 0-4. Return raw average, no scaling.
+                avgScore = weightedScore / totalDuration
             }
             
             return DailySummary(productivityScore: avgScore, topApps: topApps)

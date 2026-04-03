@@ -28,6 +28,7 @@ struct ProductivityTrackerApp: App {
             BlocklistSyncManager.shared.start()
             AccountabilityManager.shared.checkStatus()
             HeartbeatManager.shared.start()
+            InstalledAppSyncManager.shared.start()
         }
         
         // Watch for login state changes to start/stop sync
@@ -40,8 +41,9 @@ struct ProductivityTrackerApp: App {
             BlocklistSyncManager.shared.start()
             AccountabilityManager.shared.checkStatus()
             HeartbeatManager.shared.start()
+            InstalledAppSyncManager.shared.start()
         }
-        
+
         NotificationCenter.default.addObserver(
             forName: NSNotification.Name("UserDidLogout"),
             object: nil,
@@ -51,6 +53,7 @@ struct ProductivityTrackerApp: App {
             BlocklistSyncManager.shared.stop()
             AccountabilityManager.shared.checkStatus()
             HeartbeatManager.shared.stop()
+            InstalledAppSyncManager.shared.stop()
         }
         
         NotificationCenter.default.addObserver(

@@ -14,7 +14,7 @@ struct MenuBarView: View {
     @ObservedObject var blockManager = BlockManager.shared
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     
-    @State private var dbScore: Double = 5.0
+    @State private var dbScore: Double = 2.0
     @State private var dbTopApps: [DatabaseManager.TopApp] = []
     @State private var dbTopDomains: [(domain: String, duration: Int)] = []
     let timer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
@@ -26,7 +26,7 @@ struct MenuBarView: View {
                 Text("Today's Score")
                     .font(.headline)
                 Spacer()
-                Text(String(format: "%.1f", dbScore))
+                Text("\(Int((dbScore / 4.0) * 100))%")
                     .font(.title2.bold())
                     .foregroundColor(scoreColor(dbScore))
             }
@@ -165,8 +165,9 @@ struct MenuBarView: View {
     // MARK: - Helpers
 
     private func scoreColor(_ score: Double) -> Color {
-        if score >= 70 { return .green }
-        if score >= 40 { return .yellow }
+        // score is raw 0-4
+        if score >= 3 { return .green }
+        if score >= 2 { return .yellow }
         return .red
     }
 
