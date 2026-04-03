@@ -27,15 +27,16 @@ class CategoryEngine {
     private var rules: [CategoryRule] = []
     
     private init() {
-        // Load rules or insert defaults on first run
+        // Load rules or insert defaults on first run.
+        // If logged in, skip local defaults — CategoryRuleSyncManager will populate from server.
         do {
             let count = try DatabaseManager.shared.getRulesCount()
-            if count == 0 {
+            if count == 0 && !AuthManager.shared.isLoggedIn {
                 try insertDefaultRules()
             }
             refreshRules()
         } catch {
-            print("Failed to initialize CategoryEngine: \\(error)")
+            print("Failed to initialize CategoryEngine: \(error)")
         }
     }
     
@@ -145,48 +146,60 @@ class CategoryEngine {
 
     private func findAppMatch(appName: String, bundleId: String?, userOverridesOnly: Bool) -> CategoryRule? {
         let matchingRules = userOverridesOnly ? rules.filter { $0.isUserOverride } : rules.filter { !$0.isUserOverride }
+        let appRules = matchingRules.filter { $0.matchType == "app" }
 
-        // Match by bundleId second
+        // 1. Primary: match by bundleId (exact match against pattern)
+        if let bundleId = bundleId,
+           let match = appRules.first(where: { $0.matchValue == bundleId }) {
+            return match
+        }
+
+        // 2. Fallback: match by app name (case-insensitive)
+        if let match = appRules.first(where: { $0.matchValue.caseInsensitiveCompare(appName) == .orderedSame }) {
+            if bundleId != nil {
+                print("[CategoryEngine] Fallback name match for '\(appName)' — consider adding bundleId rule")
+            }
+            return match
+        }
+
+        // 3. Legacy: check for old "bundleId" match type (pre-migration data)
         if let bundleId = bundleId,
            let match = matchingRules.first(where: { $0.matchType == "bundleId" && $0.matchValue == bundleId }) {
             return match
         }
-        
-        // Match by appName third
-        if let match = matchingRules.first(where: { $0.matchType == "app" && $0.matchValue.caseInsensitiveCompare(appName) == .orderedSame }) {
-            return match
-        }
-        
+
         return nil
     }
     
     // MARK: - Default Rules
     
     private func insertDefaultRules() throws {
+        // All app entries use unified "app" match type.
+        // Pattern is bundleId where known, app name otherwise.
         let defaults: [(type: String, val: String, cat: String, score: ProductivityLevel)] = [
             // Development
-            ("app", "Xcode", "Development", .veryProductive),
-            ("bundleId", "com.microsoft.VSCode", "Development", .veryProductive),
-            ("app", "Terminal", "Development", .veryProductive),
-            ("app", "iTerm2", "Development", .veryProductive),
+            ("app", "com.apple.dt.Xcode", "Development", .veryProductive),
+            ("app", "com.microsoft.VSCode", "Development", .veryProductive),
+            ("app", "com.apple.Terminal", "Development", .veryProductive),
+            ("app", "com.googlecode.iterm2", "Development", .veryProductive),
             ("domain", "github.com", "Development", .productive),
             ("domain", "stackoverflow.com", "Development", .productive),
-            ("bundleId", "com.todesktop.230313mzl4w4u92", "Development", .veryProductive), // Cursor
-            ("bundleId", "dev.zed.Zed", "Development", .veryProductive),
-            ("bundleId", "com.sublimetext.4", "Development", .veryProductive),
-            ("bundleId", "com.panic.Nova", "Development", .veryProductive),
-            ("bundleId", "com.vscodium", "Development", .veryProductive),
-            ("bundleId", "com.github.atom", "Development", .veryProductive),
-            ("bundleId", "abnerworks.Typora", "Development", .veryProductive),
-            
+            ("app", "com.todesktop.230313mzl4w4u92", "Development", .veryProductive), // Cursor
+            ("app", "dev.zed.Zed", "Development", .veryProductive),
+            ("app", "com.sublimetext.4", "Development", .veryProductive),
+            ("app", "com.panic.Nova", "Development", .veryProductive),
+            ("app", "com.vscodium", "Development", .veryProductive),
+            ("app", "com.github.atom", "Development", .veryProductive),
+            ("app", "abnerworks.Typora", "Development", .veryProductive),
+
             // AI Tools
             ("domain", "claude.ai", "AI Tools", .veryProductive),
             ("domain", "chatgpt.com", "AI Tools", .veryProductive),
             ("domain", "chat.openai.com", "AI Tools", .veryProductive),
             ("domain", "bard.google.com", "AI Tools", .veryProductive),
             ("domain", "perplexity.ai", "AI Tools", .veryProductive),
-            ("bundleId", "com.openai.chat", "AI Tools", .veryProductive), // ChatGPT Mac app
-            
+            ("app", "com.openai.chat", "AI Tools", .veryProductive), // ChatGPT Mac app
+
             // Project Management
             ("domain", "linear.app", "Project Management", .productive),
             ("domain", "asana.com", "Project Management", .productive),
@@ -194,32 +207,29 @@ class CategoryEngine {
             ("domain", "jira.atlassian.com", "Project Management", .productive),
             ("domain", "monday.com", "Project Management", .productive),
             ("domain", "clickup.com", "Project Management", .productive),
-            
+
             // Communication & Collaboration
-            ("app", "Slack", "Communication", .neutral),
-            ("app", "Discord", "Communication", .distracting),
-            ("bundleId", "com.hnc.Discord", "Communication", .distracting),
-            ("app", "Microsoft Teams", "Communication", .neutral),
-            ("bundleId", "com.microsoft.teams2", "Communication", .neutral),
-            ("app", "Zoom", "Meetings", .productive),
-            ("bundleId", "us.zoom.xos", "Meetings", .productive),
-            ("app", "Mail", "Email", .neutral),
+            ("app", "com.tinyspeck.slackmacgap", "Communication", .neutral), // Slack
+            ("app", "com.hnc.Discord", "Communication", .distracting),
+            ("app", "com.microsoft.teams2", "Communication", .neutral),
+            ("app", "us.zoom.xos", "Meetings", .productive),
+            ("app", "com.apple.mail", "Email", .neutral),
             ("domain", "mail.google.com", "Email", .neutral),
             ("domain", "calendar.google.com", "Planning", .productive),
-            ("bundleId", "ru.keepcoder.Telegram", "Communication", .neutral),
-            ("bundleId", "org.whispersystems.signal-desktop", "Communication", .neutral),
-            
+            ("app", "ru.keepcoder.Telegram", "Communication", .neutral),
+            ("app", "org.whispersystems.signal-desktop", "Communication", .neutral),
+
             // Design
-            ("app", "Figma", "Design", .veryProductive),
-            ("app", "Sketch", "Design", .veryProductive),
-            
+            ("app", "com.figma.Desktop", "Design", .veryProductive),
+            ("app", "com.bohemiancoding.sketch3", "Design", .veryProductive),
+
             // Browsers (neutral by themselves, waiting for domain)
-            ("app", "Safari", "Browsing", .neutral),
-            ("app", "Google Chrome", "Browsing", .neutral),
-            ("app", "Arc", "Browsing", .neutral),
-            ("app", "Brave Browser", "Browsing", .neutral),
-            ("app", "Microsoft Edge", "Browsing", .neutral),
-            
+            ("app", "com.apple.Safari", "Browsing", .neutral),
+            ("app", "com.google.Chrome", "Browsing", .neutral),
+            ("app", "company.thebrowser.Browser", "Browsing", .neutral), // Arc
+            ("app", "com.brave.Browser", "Browsing", .neutral),
+            ("app", "com.microsoft.edgemac", "Browsing", .neutral),
+
             // Social Media (distracting)
             ("domain", "twitter.com", "Social Media", .veryDistracting),
             ("domain", "x.com", "Social Media", .veryDistracting),
@@ -232,7 +242,7 @@ class CategoryEngine {
             ("domain", "snapchat.com", "Social Media", .veryDistracting),
             ("domain", "pinterest.com", "Social Media", .distracting),
             ("domain", "old.reddit.com", "Social Media", .distracting),
-            
+
             // Entertainment
             ("domain", "youtube.com", "Video", .distracting),
             ("domain", "netflix.com", "Video", .veryDistracting),
@@ -242,15 +252,15 @@ class CategoryEngine {
             ("domain", "jiocinema.com", "Video", .veryDistracting),
             ("domain", "hulu.com", "Video", .veryDistracting),
             ("domain", "crunchyroll.com", "Video", .veryDistracting),
-            ("app", "Spotify", "Music", .neutral),
-            ("app", "Music", "Music", .neutral),
-            
+            ("app", "com.spotify.client", "Music", .neutral),
+            ("app", "com.apple.Music", "Music", .neutral),
+
             // Info / News
             ("domain", "news.ycombinator.com", "News", .distracting),
             ("domain", "nytimes.com", "News", .distracting),
             ("domain", "moneycontrol.com", "News", .distracting)
         ]
-        
+
         for rule in defaults {
             let r = CategoryRule(
                 matchType: rule.type,

@@ -29,8 +29,9 @@ struct ProductivityTrackerApp: App {
             AccountabilityManager.shared.checkStatus()
             HeartbeatManager.shared.start()
             InstalledAppSyncManager.shared.start()
+            CategoryRuleSyncManager.shared.start()
         }
-        
+
         // Watch for login state changes to start/stop sync
         NotificationCenter.default.addObserver(
             forName: NSNotification.Name("UserDidLogin"),
@@ -42,6 +43,7 @@ struct ProductivityTrackerApp: App {
             AccountabilityManager.shared.checkStatus()
             HeartbeatManager.shared.start()
             InstalledAppSyncManager.shared.start()
+            CategoryRuleSyncManager.shared.start()
         }
 
         NotificationCenter.default.addObserver(
@@ -54,6 +56,7 @@ struct ProductivityTrackerApp: App {
             AccountabilityManager.shared.checkStatus()
             HeartbeatManager.shared.stop()
             InstalledAppSyncManager.shared.stop()
+            CategoryRuleSyncManager.shared.stop()
         }
         
         NotificationCenter.default.addObserver(

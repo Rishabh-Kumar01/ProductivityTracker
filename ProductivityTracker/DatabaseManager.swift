@@ -33,8 +33,8 @@ struct ActivityRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
 
 struct CategoryRule: Codable, FetchableRecord, PersistableRecord, Identifiable {
     var id: String = UUID().uuidString
-    var matchType: String   // "app", "bundleId", "domain"
-    var matchValue: String  // e.g., "Xcode", "com.apple.Safari", "github.com"
+    var matchType: String   // "app" or "domain"
+    var matchValue: String  // bundleId (com.apple.Safari), app name (Xcode), or domain (github.com)
     var category: String    // e.g., "Development", "Social Media"
     var productivityScore: Int // 0-4
     var isUserOverride: Bool = false
@@ -193,6 +193,17 @@ final class DatabaseManager {
     func getRulesCount() throws -> Int {
         try dbQueue.read { db in
             try CategoryRule.fetchCount(db)
+        }
+    }
+
+    /// Replace all category rules atomically (DELETE all + INSERT in transaction).
+    /// Used by CategoryRuleSyncManager to sync from server.
+    func replaceCategoryRules(_ rules: [CategoryRule]) throws {
+        try dbQueue.write { db in
+            try CategoryRule.deleteAll(db)
+            for rule in rules {
+                try rule.insert(db)
+            }
         }
     }
 
