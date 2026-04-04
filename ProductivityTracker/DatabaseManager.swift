@@ -294,12 +294,40 @@ final class DatabaseManager {
         try dbQueue.read { db in
             let startOfDay = Calendar.current.startOfDay(for: date)
             let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: startOfDay)!
-            
+
             let totalSeconds = try Int.fetchOne(db, sql: """
-                SELECT SUM(duration) FROM activities 
+                SELECT SUM(duration) FROM activities
                 WHERE category = ? AND startTime >= ? AND startTime < ? AND isIdle = 0
                 """, arguments: [category, startOfDay, endOfDay])
-            
+
+            return totalSeconds ?? 0
+        }
+    }
+
+    func getDailyUsage(forDomain domain: String, on date: Date = Date()) throws -> Int {
+        try dbQueue.read { db in
+            let startOfDay = Calendar.current.startOfDay(for: date)
+            let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: startOfDay)!
+
+            let totalSeconds = try Int.fetchOne(db, sql: """
+                SELECT SUM(duration) FROM activities
+                WHERE domain = ? AND startTime >= ? AND startTime < ? AND isIdle = 0
+                """, arguments: [domain, startOfDay, endOfDay])
+
+            return totalSeconds ?? 0
+        }
+    }
+
+    func getDailyUsage(forAppName appName: String, on date: Date = Date()) throws -> Int {
+        try dbQueue.read { db in
+            let startOfDay = Calendar.current.startOfDay(for: date)
+            let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: startOfDay)!
+
+            let totalSeconds = try Int.fetchOne(db, sql: """
+                SELECT SUM(duration) FROM activities
+                WHERE appName = ? AND startTime >= ? AND startTime < ? AND isIdle = 0
+                """, arguments: [appName, startOfDay, endOfDay])
+
             return totalSeconds ?? 0
         }
     }

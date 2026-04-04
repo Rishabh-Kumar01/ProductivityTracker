@@ -12,12 +12,14 @@ struct AlertRule: Codable, Identifiable {
     var pattern: String
     var limitMinutes: Int
     var autoBlock: Bool
-    
+    var displayName: String?
+
     enum CodingKeys: String, CodingKey {
         case id, pattern
         case matchType = "match_type"
         case limitMinutes = "limit_minutes"
         case autoBlock = "auto_block"
+        case displayName = "display_name"
     }
 }
 
@@ -104,15 +106,24 @@ class AlertManager: ObservableObject {
             
             do {
                 if rule.matchType == "app" {
+                    // Primary: match by bundleId
                     usageSeconds = try DatabaseManager.shared.getDailyUsage(forBundleId: rule.pattern)
+                    // Fallback: match by app name (for legacy rules stored with display names)
+                    if usageSeconds == 0 {
+                        usageSeconds = try DatabaseManager.shared.getDailyUsage(forAppName: rule.pattern)
+                    }
                 } else if rule.matchType == "category" {
                     usageSeconds = try DatabaseManager.shared.getDailyUsage(forCategory: rule.pattern)
+                } else if rule.matchType == "domain" {
+                    usageSeconds = try DatabaseManager.shared.getDailyUsage(forDomain: rule.pattern)
                 }
-                
+
+                let displayLabel = rule.displayName ?? rule.pattern
+
                 // 100% Limit Trigger
                 if usageSeconds >= limitSeconds {
                     if !notifiedBlockPatterns.contains(rule.pattern) {
-                        sendNotification(title: "Time Limit Reached!", body: "You have used up your " + String(rule.limitMinutes) + "m limit for " + rule.pattern)
+                        sendNotification(title: "Time Limit Reached!", body: "You have used up your " + String(rule.limitMinutes) + "m limit for " + displayLabel)
                         notifiedBlockPatterns.insert(rule.pattern)
                         
                         if rule.autoBlock {
@@ -136,7 +147,7 @@ class AlertManager: ObservableObject {
                 else if usageSeconds >= Int(Double(limitSeconds) * 0.8) {
                     if !notifiedWarnPatterns.contains(rule.pattern) {
                         let remaining = Int(Double(rule.limitMinutes) * 0.2)
-                        sendNotification(title: "Approaching Time Limit", body: "You have less than " + String(remaining) + "m remaining for " + rule.pattern)
+                        sendNotification(title: "Approaching Time Limit", body: "You have less than " + String(remaining) + "m remaining for " + displayLabel)
                         notifiedWarnPatterns.insert(rule.pattern)
                     }
                 }
