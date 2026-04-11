@@ -99,15 +99,29 @@ struct CategoriesSettingsView: View {
 
 struct BlockingSettingsView: View {
     @ObservedObject var blockManager = BlockManager.shared
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Blocked Applications")
                 .font(.headline)
-            List(Array(blockManager.blockedBundleIds), id: \.self) { bundleId in
-                Text(bundleId)
+            if blockManager.blockedBundleIds.isEmpty {
+                Text("No blocked apps.")
+                    .foregroundColor(.secondary)
+            } else {
+                List(Array(blockManager.blockedBundleIds).sorted(), id: \.self) { bundleId in
+                    HStack {
+                        Text(bundleId)
+                        Spacer()
+                        Button(role: .destructive) {
+                            blockManager.removeBlockedApp(bundleId: bundleId)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
             }
-            
+
             Text("Blocked Websites")
                 .font(.headline)
             Text("Website blocks are now managed via the Web Dashboard.")

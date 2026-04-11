@@ -648,6 +648,16 @@ class BlockManager: ObservableObject {
         }
     }
 
+    /// Remove a bundle ID from the blocked set (manual removal from Settings UI).
+    /// Also clears it from the auto-block tracking set so stale entries can be cleaned up.
+    func removeBlockedApp(bundleId: String) {
+        blockedBundleIds.remove(bundleId)
+        if autoBlockedBundleIds.remove(bundleId) != nil {
+            persistAutoBlockedBundleIds()
+        }
+        print("[BlockManager] Manually removed blocked app: \(bundleId)")
+    }
+
     private func captureStateBeforeAutoBlockIfNeeded() {
         if wasBlockingActiveBeforeAutoBlock == nil {
             wasBlockingActiveBeforeAutoBlock = isBlockingActive
