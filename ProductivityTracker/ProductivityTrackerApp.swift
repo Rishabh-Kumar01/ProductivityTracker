@@ -8,6 +8,7 @@
 import SwiftUI
 import ServiceManagement
 import Combine
+import AppKit
 
 @main
 struct ProductivityTrackerApp: App {
@@ -30,6 +31,7 @@ struct ProductivityTrackerApp: App {
             HeartbeatManager.shared.start()
             InstalledAppSyncManager.shared.start()
             CategoryRuleSyncManager.shared.start()
+            SSEManager.shared.connect()
         }
 
         // Watch for login state changes to start/stop sync
@@ -44,6 +46,7 @@ struct ProductivityTrackerApp: App {
             HeartbeatManager.shared.start()
             InstalledAppSyncManager.shared.start()
             CategoryRuleSyncManager.shared.start()
+            SSEManager.shared.connect()
         }
 
         NotificationCenter.default.addObserver(
@@ -57,6 +60,29 @@ struct ProductivityTrackerApp: App {
             HeartbeatManager.shared.stop()
             InstalledAppSyncManager.shared.stop()
             CategoryRuleSyncManager.shared.stop()
+            SSEManager.shared.disconnect()
+        }
+
+        // Drop the SSE connection during sleep — macOS suspends the TCP socket anyway,
+        // and the reconnect loop on wake picks up any changes made while asleep.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            SSEManager.shared.disconnect()
+        }
+
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            guard AuthManager.shared.isLoggedIn else { return }
+            // Brief grace for the network stack to come back up after wake.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                SSEManager.shared.connect()
+            }
         }
         
         NotificationCenter.default.addObserver(

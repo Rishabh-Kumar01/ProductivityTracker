@@ -26,7 +26,7 @@ class CategoryRuleSyncManager {
         syncTimer = nil
     }
 
-    private func performSync() {
+    func performSync() {
         guard AuthManager.shared.isLoggedIn else { return }
 
         Task {

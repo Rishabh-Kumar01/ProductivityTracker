@@ -54,10 +54,16 @@ class AlertManager: ObservableObject {
     }
     
     private func startPolling() {
-        // Poll every 60 seconds
+        // Rule fetching is nudged via SSE push. The 5-minute timer is a safety net
+        // for the case where SSE is disconnected (lid closed, network down).
+        // Local alert checks against the cached rules still need to run frequently,
+        // so checkAlerts() still ticks every 60s.
         timer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
-            self?.fetchRules()
             self?.checkAlerts()
+        }
+
+        Timer.scheduledTimer(withTimeInterval: 300.0, repeats: true) { [weak self] _ in
+            self?.fetchRules()
         }
     }
     
