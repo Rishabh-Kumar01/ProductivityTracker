@@ -27,13 +27,32 @@ class BlockManager: ObservableObject {
         }
     }
     
-    // Configurable blocked apps (bundle IDs)
+    // Configurable blocked apps (bundle IDs). Persisted across launches.
     @Published var blockedBundleIds: Set<String> = [
         "com.apple.Music",
         "com.spotify.client",
         "com.apple.TV"
-    ]
-    
+    ] {
+        didSet {
+            guard oldValue != blockedBundleIds else { return }
+            UserDefaults.standard.set(Array(blockedBundleIds), forKey: Self.blockedBundleIdsKey)
+        }
+    }
+
+    // Subset of blockedBundleIds that were auto-added by an AlertManager rule hitting its limit.
+    // Cleared on day change (midnight rollover) so yesterday's auto-blocks don't leak into today.
+    // NOT @Published — this is internal bookkeeping, not UI-visible.
+    private var autoBlockedBundleIds: Set<String> = []
+
+    // The value of isBlockingActive captured right before the first auto-block of the day flipped
+    // it on. Restored on day-change reset so we don't leave focus mode on if the user never
+    // turned it on themselves. nil = no auto-block has happened since the last clear.
+    private var wasBlockingActiveBeforeAutoBlock: Bool?
+
+    private static let blockedBundleIdsKey = "blockedBundleIds"
+    private static let autoBlockedBundleIdsKey = "autoBlockedBundleIds"
+    private static let wasBlockingActiveBeforeAutoBlockKey = "wasBlockingActiveBeforeAutoBlock"
+
     @Published var helperInstalled: Bool = false
     @Published var sudoersHelperInstalled: Bool = false
 
@@ -45,8 +64,17 @@ class BlockManager: ObservableObject {
     private let helperMachServiceName = "com.rishabh.productivitytracker.helper"
     private let sudoersHelperPath = "/usr/local/bin/productivity-hosts-helper"
     private let sudoersFilePath = "/etc/sudoers.d/productivity-tracker"
-    
+
     private init() {
+        // Restore persisted block state before anything else so activateBlocking() uses the right set.
+        if let persistedBlocked = UserDefaults.standard.stringArray(forKey: Self.blockedBundleIdsKey) {
+            self.blockedBundleIds = Set(persistedBlocked)
+        }
+        self.autoBlockedBundleIds = Set(UserDefaults.standard.stringArray(forKey: Self.autoBlockedBundleIdsKey) ?? [])
+        if UserDefaults.standard.object(forKey: Self.wasBlockingActiveBeforeAutoBlockKey) != nil {
+            self.wasBlockingActiveBeforeAutoBlock = UserDefaults.standard.bool(forKey: Self.wasBlockingActiveBeforeAutoBlockKey)
+        }
+
         // Check helper status
         checkHelperStatus()
         checkSudoersHelper()
@@ -530,7 +558,92 @@ class BlockManager: ObservableObject {
         updateHostsViaAppleScript(domains: [], block: false)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { TamperMonitor.shared.updateExpectedHash() }
     }
-    
+
+    // MARK: - Auto-Block (driven by AlertManager rule-limit triggers)
+
+    /// Block an app bundle ID because an AlertManager rule hit its daily limit.
+    /// Tracks the entry in `autoBlockedBundleIds` so it can be cleared at the next day change.
+    /// If the user had already manually blocked this bundle, we leave it out of the auto-set so
+    /// tomorrow's clear doesn't unblock the user's intentional block.
+    func autoBlockApp(bundleId: String) {
+        captureStateBeforeAutoBlockIfNeeded()
+        let wasManuallyBlocked = blockedBundleIds.contains(bundleId)
+        blockedBundleIds.insert(bundleId)
+        if !wasManuallyBlocked {
+            autoBlockedBundleIds.insert(bundleId)
+            persistAutoBlockedBundleIds()
+        }
+        if !isBlockingActive {
+            isBlockingActive = true
+        }
+    }
+
+    /// Block a domain because an AlertManager rule hit its daily limit.
+    /// The domain is inserted with source='auto_block'; tomorrow's clear deletes exactly those rows.
+    /// If the domain was already manually blocked, `onConflict: .ignore` keeps the manual row intact.
+    func autoBlockDomain(domain: String) {
+        captureStateBeforeAutoBlockIfNeeded()
+        do {
+            try DatabaseManager.shared.insertBlockedDomain(domain: domain, source: "auto_block")
+        } catch {
+            print("[BlockManager] Failed to auto-block domain \(domain): \(error)")
+            return
+        }
+        applyBlockList()
+        if !isBlockingActive {
+            isBlockingActive = true
+        }
+    }
+
+    /// Clear every auto-block created today. Called by AlertManager on day change.
+    /// Restores `isBlockingActive` to whatever it was before the first auto-block of the day.
+    func clearAllAutoBlocks() {
+        var deletedDomainCount = 0
+        do {
+            deletedDomainCount = try DatabaseManager.shared.deleteBlockedDomains(bySource: "auto_block")
+        } catch {
+            print("[BlockManager] Failed to delete auto-blocked domains: \(error)")
+        }
+
+        let clearedBundleCount = autoBlockedBundleIds.count
+        if clearedBundleCount > 0 {
+            for bundleId in autoBlockedBundleIds {
+                blockedBundleIds.remove(bundleId)
+            }
+            autoBlockedBundleIds.removeAll()
+            persistAutoBlockedBundleIds()
+        }
+
+        if deletedDomainCount > 0 {
+            applyBlockList()
+        }
+
+        // Restore the pre-auto-block blocking state. If focus mode was off before the first
+        // auto-block flipped it on, turn it back off now that today's triggers are cleared.
+        if let prior = wasBlockingActiveBeforeAutoBlock {
+            wasBlockingActiveBeforeAutoBlock = nil
+            UserDefaults.standard.removeObject(forKey: Self.wasBlockingActiveBeforeAutoBlockKey)
+            if isBlockingActive != prior {
+                isBlockingActive = prior
+            }
+        }
+
+        if clearedBundleCount > 0 || deletedDomainCount > 0 {
+            print("[BlockManager] Cleared auto-blocks (\(clearedBundleCount) apps, \(deletedDomainCount) domains)")
+        }
+    }
+
+    private func captureStateBeforeAutoBlockIfNeeded() {
+        if wasBlockingActiveBeforeAutoBlock == nil {
+            wasBlockingActiveBeforeAutoBlock = isBlockingActive
+            UserDefaults.standard.set(isBlockingActive, forKey: Self.wasBlockingActiveBeforeAutoBlockKey)
+        }
+    }
+
+    private func persistAutoBlockedBundleIds() {
+        UserDefaults.standard.set(Array(autoBlockedBundleIds), forKey: Self.autoBlockedBundleIdsKey)
+    }
+
     // MARK: - App Blocking
     
     private func terminateBlockedApps() {

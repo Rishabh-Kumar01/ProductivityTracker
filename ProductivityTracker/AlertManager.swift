@@ -95,17 +95,20 @@ class AlertManager: ObservableObject {
     }
     
     private func checkAlerts() {
-        guard !alertRules.isEmpty else { return }
-        
-        // Reset flags if it's a new day
+        // Day-change reset runs BEFORE the alertRules check so that yesterday's auto-blocks get
+        // cleared even if today's rule fetch hasn't succeeded yet (cold backend, network out, etc).
         let currentDayStr = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .none)
         let lastDayStr = UserDefaults.standard.string(forKey: "alertLastCheckedDay")
         if currentDayStr != lastDayStr {
             notifiedWarnPatterns.removeAll()
             notifiedBlockPatterns.removeAll()
+            BlockManager.shared.clearAllAutoBlocks()
             UserDefaults.standard.set(currentDayStr, forKey: "alertLastCheckedDay")
+            print("[AlertManager] New day detected, cleared auto-blocks")
         }
-        
+
+        guard !alertRules.isEmpty else { return }
+
         for rule in alertRules {
             let limitSeconds = rule.limitMinutes * 60
             var usageSeconds = 0
@@ -135,16 +138,10 @@ class AlertManager: ObservableObject {
                         if rule.autoBlock {
                             DispatchQueue.main.async {
                                 if rule.matchType == "app" {
-                                    BlockManager.shared.blockedBundleIds.insert(rule.pattern)
+                                    BlockManager.shared.autoBlockApp(bundleId: rule.pattern)
                                 } else if rule.matchType == "domain" {
-                                    do {
-                                        try DatabaseManager.shared.insertBlockedDomain(domain: rule.pattern, source: "auto_block")
-                                        BlockManager.shared.applyBlockList()
-                                    } catch {
-                                        print("Failed to auto-block domain: \(error)")
-                                    }
+                                    BlockManager.shared.autoBlockDomain(domain: rule.pattern)
                                 }
-                                BlockManager.shared.isBlockingActive = true // Ensure blocking is ON
                             }
                         }
                     }

@@ -459,6 +459,13 @@ final class DatabaseManager {
             try record.insert(db, onConflict: .ignore)
         }
     }
+
+    @discardableResult
+    func deleteBlockedDomains(bySource source: String) throws -> Int {
+        try dbQueue.write { db in
+            try BlockedDomain.filter(Column("source") == source).deleteAll(db)
+        }
+    }
     
     func getActiveBlockedDomains() throws -> [String] {
         try dbQueue.read { db in
