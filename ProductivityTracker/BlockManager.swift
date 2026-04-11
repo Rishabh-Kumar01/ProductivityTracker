@@ -573,8 +573,23 @@ class BlockManager: ObservableObject {
             autoBlockedBundleIds.insert(bundleId)
             persistAutoBlockedBundleIds()
         }
-        if !isBlockingActive {
+
+        // If focus mode is already on, flipping isBlockingActive is a no-op, so the
+        // activateBlocking() path that terminates running apps doesn't run. Kill any already-open
+        // instance of this specific bundle explicitly. If focus mode was off, the isBlockingActive
+        // assignment below will trigger activateBlocking() which sweeps all running blocked apps,
+        // so we avoid double work by only terminating here when blocking was already active.
+        if isBlockingActive {
+            terminateRunningApp(bundleId: bundleId)
+        } else {
             isBlockingActive = true
+        }
+    }
+
+    private func terminateRunningApp(bundleId: String) {
+        for app in NSWorkspace.shared.runningApplications where app.bundleIdentifier == bundleId {
+            print("[BlockManager] Auto-block: force terminating already-running \(bundleId)")
+            app.forceTerminate()
         }
     }
 
