@@ -39,7 +39,25 @@ class AlertManager: ObservableObject {
     
     private init() {
         requestNotificationPermission()
+        // Run the day-change check immediately on launch so any stale auto-blocks from a
+        // previous day are cleared before the first 60s timer fires. This is what unblocks
+        // Brave (and any other auto-blocked app) on the morning after a limit was hit.
+        runDayChangeCheckIfNeeded()
         startPolling()
+    }
+
+    /// Clears notification flags and calls BlockManager.clearAllAutoBlocks() if the current
+    /// calendar day differs from the last stored day. Safe to call repeatedly — no-op on same day.
+    private func runDayChangeCheckIfNeeded() {
+        let currentDayStr = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .none)
+        let lastDayStr = UserDefaults.standard.string(forKey: "alertLastCheckedDay")
+        guard currentDayStr != lastDayStr else { return }
+
+        notifiedWarnPatterns.removeAll()
+        notifiedBlockPatterns.removeAll()
+        BlockManager.shared.clearAllAutoBlocks()
+        UserDefaults.standard.set(currentDayStr, forKey: "alertLastCheckedDay")
+        print("[AlertManager] Day change detected at launch, cleared auto-blocks")
     }
     
     private func requestNotificationPermission() {
@@ -97,15 +115,7 @@ class AlertManager: ObservableObject {
     private func checkAlerts() {
         // Day-change reset runs BEFORE the alertRules check so that yesterday's auto-blocks get
         // cleared even if today's rule fetch hasn't succeeded yet (cold backend, network out, etc).
-        let currentDayStr = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .none)
-        let lastDayStr = UserDefaults.standard.string(forKey: "alertLastCheckedDay")
-        if currentDayStr != lastDayStr {
-            notifiedWarnPatterns.removeAll()
-            notifiedBlockPatterns.removeAll()
-            BlockManager.shared.clearAllAutoBlocks()
-            UserDefaults.standard.set(currentDayStr, forKey: "alertLastCheckedDay")
-            print("[AlertManager] New day detected, cleared auto-blocks")
-        }
+        runDayChangeCheckIfNeeded()
 
         guard !alertRules.isEmpty else { return }
 

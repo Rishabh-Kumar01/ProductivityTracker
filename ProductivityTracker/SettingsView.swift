@@ -139,7 +139,7 @@ struct AlertsSettingsView: View {
                         Text(rule.pattern)
                             .fontWeight(.medium)
                         Spacer()
-                        Text("\\(rule.limitMinutes)m")
+                        Text("\(rule.limitMinutes)m")
                         if rule.autoBlock {
                             Image(systemName: "lock.fill").foregroundColor(.red)
                         }
