@@ -85,6 +85,7 @@ class IdleDetector: ObservableObject {
         )
         let nowIdle = idleTime >= threshold
         if nowIdle != isIdle {
+            print("[DIAG] IdleDetector: idle=\(nowIdle), idleTime=\(Int(idleTime))s, threshold=\(Int(threshold))s")
             setIdle(nowIdle)
         }
     }

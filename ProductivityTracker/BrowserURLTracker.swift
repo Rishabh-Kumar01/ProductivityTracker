@@ -96,6 +96,7 @@ class BrowserURLTracker {
         // Check retry-with-backoff: skip if denied and not yet time to retry
         if let denied = deniedBrowsers[bundleId] {
             if Date() < denied.retryAfter {
+                print("[DIAG] Browser \(bundleId) in backoff until \(denied.retryAfter)")
                 return nil  // Still in backoff period — skip silently
             }
             // Time to retry — remove from denied and try again
@@ -146,6 +147,7 @@ class BrowserURLTracker {
             print("[URLTracker] ✓ \(name) permission granted — URL tracking resumed")
         }
 
+        print("[DIAG] Got URL for \(bundleId): \(result.stringValue ?? "nil")")
         return result.stringValue
     }
 

@@ -12,15 +12,12 @@ import AppKit
 
 @main
 struct ProductivityTrackerApp: App {
-    @StateObject private var idleDetector: IdleDetector
-    @StateObject private var tracker: ActivityTracker
+    @ObservedObject private var tracker = ActivityTracker.shared
     @StateObject private var appState = AppState()
 
     init() {
-        let idle = IdleDetector(threshold: 300)
-        _idleDetector = StateObject(wrappedValue: idle)
-        _tracker = StateObject(wrappedValue: ActivityTracker(idleDetector: idle))
-        
+        print("[DIAG] ProductivityTrackerApp.init() called at \(Date())")
+
         let _ = AlertManager.shared.fetchRules()
         
         // Start syncing data to cloud if logged in
@@ -92,21 +89,27 @@ struct ProductivityTrackerApp: App {
         ) { _ in
             HeartbeatManager.shared.sendHeartbeat(isTerminating: true)
         }
+
+        // Start tracking immediately on launch (not gated on menu bar click)
+        if UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") {
+            ActivityTracker.shared.startTracking()
+        }
     }
 
     var body: some Scene {
         MenuBarExtra("Tracker", systemImage: "chart.bar.fill") {
             MenuBarView(tracker: tracker)
                 .onAppear {
+                    print("[DIAG] MenuBarExtra.onAppear fired at \(Date()) — isTracking: \(tracker.isTracking), onboarded: \(appState.hasCompletedOnboarding)")
                     if !appState.hasCompletedOnboarding {
                         appState.showOnboardingWindow(tracker: tracker)
-                    } else if !tracker.isTracking {
-                        tracker.startTracking()
                     }
+                    // startTracking is handled at app launch in init().
+                    // The guard in startTracking() makes any subsequent call a no-op.
                 }
         }
         .menuBarExtraStyle(.window)
-        
+
         Settings {
             SettingsView()
         }
@@ -135,7 +138,7 @@ class AppState: ObservableObject {
                 self?.hasCompletedOnboarding = newValue
                 if newValue {
                     self?.dismissOnboardingWindow()
-                    tracker.startTracking()
+                    ActivityTracker.shared.startTracking()
                     try? SMAppService.mainApp.register()
                 }
             }

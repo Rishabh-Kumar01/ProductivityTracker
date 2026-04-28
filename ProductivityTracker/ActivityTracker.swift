@@ -26,9 +26,13 @@ class ActivityTracker: ObservableObject {
     @Published var totalDuration: Int = 0
     @Published var isTracking = false
 
+    static let shared = ActivityTracker()
+
     private var cancellables = Set<AnyCancellable>()
     private var titlePollTimer: Timer?
+    private var diagnosticHeartbeatTimer: Timer?
     private var idleObserver: NSObjectProtocol?
+    private var screenUnlockObserver: NSObjectProtocol?
 
     // Current activity being tracked
     private var currentAppName: String?
@@ -49,17 +53,18 @@ class ActivityTracker: ObservableObject {
         "com.apple.screencaptureui",
         "com.apple.UserNotificationCenter",
         "com.apple.dock",
-        "com.apple.finder",            // Optional: remove if you want Finder tracked
+        // "com.apple.finder" — intentionally removed to match AW/RT tracking scope
         "com.rishabh.ProductivityTracker",  // Don't track ourselves
     ]
 
-    init(idleDetector: IdleDetector) {
-        self.idleDetector = idleDetector
+    private init() {
+        self.idleDetector = IdleDetector(threshold: 300)
     }
 
     // MARK: - Start / Stop Tracking
 
     func startTracking() {
+        print("[DIAG] ActivityTracker.startTracking() called at \(Date())")
         guard !isTracking else { return }
         isTracking = true
 
@@ -71,6 +76,26 @@ class ActivityTracker: ObservableObject {
                 guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
                     as? NSRunningApplication else { return }
                 self?.handleAppSwitch(app)
+            }
+            .store(in: &cancellables)
+
+        // Detect deactivation with no successor (desktop click, system modal)
+        NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.didDeactivateApplicationNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] notification in
+                guard let self = self, !self.idleDetector.isIdle else { return }
+                guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+                guard let bundleId = app.bundleIdentifier, bundleId == self.currentBundleId else { return }
+
+                // Grace period — if another app activates within 300ms, didActivate handles it.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    guard let self = self else { return }
+                    if self.currentBundleId == bundleId && self.currentStartTime != nil {
+                        print("[DIAG] Deactivation with no successor for: \(bundleId) — closing activity")
+                        self.closeCurrentActivity()
+                    }
+                }
             }
             .store(in: &cancellables)
 
@@ -92,6 +117,19 @@ class ActivityTracker: ObservableObject {
             self?.handleIdleStateChange(isIdle: isIdle)
         }
 
+        // Re-capture frontmost app after screen unlock
+        screenUnlockObserver = DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.apple.screenIsUnlocked"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self, self.isTracking else { return }
+            print("[DIAG] Screen UNLOCKED — re-capturing frontmost app")
+            if let frontApp = NSWorkspace.shared.frontmostApplication {
+                self.handleAppSwitch(frontApp)
+            }
+        }
+
         // Start idle detector
         idleDetector.start()
 
@@ -105,11 +143,74 @@ class ActivityTracker: ObservableObject {
 
         // Run browser URL diagnostic on startup
         browserURLTracker.runStartupDiagnostic()
+
+        // Diagnostic heartbeat — confirms tracking loop is alive
+        diagnosticHeartbeatTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            print("[DIAG] Heartbeat: isTracking=\(self.isTracking), currentApp=\(self.currentAppName ?? "none"), hasTimer=\(self.titlePollTimer != nil)")
+        }
+        diagnosticHeartbeatTimer?.tolerance = 5.0
+
+        // Sleep — close current activity with backdated end time
+        NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.willSleepNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                print("[DIAG] SLEEP — closing current activity at \(Date()), currentApp: \(self.currentAppName ?? "none")")
+                let idleTime = CGEventSource.secondsSinceLastEventType(
+                    .combinedSessionState,
+                    eventType: CGEventType(rawValue: ~0)!
+                )
+                let adjustedEnd = Date().addingTimeInterval(-min(idleTime, self.idleDetector.threshold))
+                self.closeCurrentActivity(overrideEndTime: adjustedEnd)
+            }
+            .store(in: &cancellables)
+
+        // Wake — RunLoop may have dropped our timers; recreate them and re-capture frontmost app
+        NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.didWakeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self = self, self.isTracking else { return }
+                print("[DIAG] WAKE — restarting timers at \(Date()), hasTimer: \(self.titlePollTimer != nil), currentApp: \(self.currentAppName ?? "none")")
+
+                self.titlePollTimer?.invalidate()
+                self.titlePollTimer = Timer.scheduledTimer(
+                    withTimeInterval: 2.0, repeats: true
+                ) { [weak self] _ in
+                    self?.checkWindowTitle()
+                }
+                self.titlePollTimer?.tolerance = 0.5
+
+                self.diagnosticHeartbeatTimer?.invalidate()
+                self.diagnosticHeartbeatTimer = Timer.scheduledTimer(
+                    withTimeInterval: 60.0, repeats: true
+                ) { [weak self] _ in
+                    guard let self = self else { return }
+                    print("[DIAG] Heartbeat: isTracking=\(self.isTracking), currentApp=\(self.currentAppName ?? "none"), hasTimer=\(self.titlePollTimer != nil)")
+                }
+                self.diagnosticHeartbeatTimer?.tolerance = 5.0
+
+                self.idleDetector.stop()
+                self.idleDetector.start()
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    if let frontApp = NSWorkspace.shared.frontmostApplication {
+                        self?.handleAppSwitch(frontApp)
+                    }
+                }
+            }
+            .store(in: &cancellables)
     }
 
     func stopTracking() {
+        print("[DIAG] ActivityTracker.stopTracking() called at \(Date())")
         isTracking = false
         closeCurrentActivity()
+
+        diagnosticHeartbeatTimer?.invalidate()
+        diagnosticHeartbeatTimer = nil
 
         cancellables.removeAll()
         titlePollTimer?.invalidate()
@@ -118,6 +219,11 @@ class ActivityTracker: ObservableObject {
         if let observer = idleObserver {
             NotificationCenter.default.removeObserver(observer)
             idleObserver = nil
+        }
+
+        if let observer = screenUnlockObserver {
+            DistributedNotificationCenter.default().removeObserver(observer)
+            screenUnlockObserver = nil
         }
 
         idleDetector.stop()
@@ -132,8 +238,11 @@ class ActivityTracker: ObservableObject {
         let bundleId = app.bundleIdentifier
         let pid = app.processIdentifier
 
+        print("[DIAG] App switch: \(appName) (pid: \(pid)) at \(Date()) — idle: \(idleDetector.isIdle)")
+
         // Skip excluded system processes
         if let bundleId, excludedBundleIds.contains(bundleId) {
+            print("[DIAG] Skipping excluded app: \(bundleId)")
             return  // Keep previous activity running
         }
 
@@ -172,6 +281,7 @@ class ActivityTracker: ObservableObject {
         let urlChanged = newURL != currentURL && newURL != nil
 
         if titleChanged || urlChanged {
+            print("[DIAG] Title/URL change detected — old: \(currentWindowTitle ?? "nil"), new: \(newTitle ?? "nil"), urlChanged: \(urlChanged)")
             // Title or URL changed — close current activity and start new one
             closeCurrentActivity()
 
@@ -202,15 +312,16 @@ class ActivityTracker: ObservableObject {
 
     // MARK: - Activity Lifecycle
 
-    private func closeCurrentActivity() {
+    private func closeCurrentActivity(overrideEndTime: Date? = nil) {
         guard let appName = currentAppName,
               let startTime = currentStartTime else { return }
 
-        let endTime = Date()
+        let endTime = overrideEndTime ?? Date()
         let duration = Int(endTime.timeIntervalSince(startTime))
 
         // Skip noise from rapid switching (< 1 second)
         guard duration >= 1 else {
+            print("[DIAG] Dropped sub-1s activity: \(appName), duration: \(duration)s")
             resetCurrent()
             return
         }
@@ -223,6 +334,7 @@ class ActivityTracker: ObservableObject {
             windowTitle: currentWindowTitle,
             domain: domain
         )
+        print("[DIAG] Closing activity: \(appName), duration: \(duration)s, domain: \(domain ?? "nil"), category: \(resolved.category)")
 
         let record = ActivityRecord(
             appName: appName,
@@ -260,6 +372,7 @@ class ActivityTracker: ObservableObject {
     // MARK: - Idle Handling
 
     private func handleIdleStateChange(isIdle: Bool) {
+        print("[DIAG] Idle state changed: isIdle=\(isIdle) at \(Date())")
         if isIdle {
             closeCurrentActivity()
         } else {
