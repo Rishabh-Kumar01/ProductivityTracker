@@ -41,8 +41,11 @@ class BlocklistSyncManager: ObservableObject {
         guard !isSyncing else { return }
         DispatchQueue.main.async { self.isSyncing = true }
         
-        // Fetch all blocked domains in one go using large limit
-        guard let url = URL(string: "\(apiBaseURL)/blocker/domains?limit=500000") else { return }
+        // Fetch all blocked domains in one go using large limit. Send
+        // platform=macos explicitly so the new server-side per-platform
+        // scoping returns the right rows (server defaults to macos for
+        // legacy calls, but explicit is safer if the default ever changes).
+        guard let url = URL(string: "\(apiBaseURL)/blocker/domains?limit=500000&platform=macos") else { return }
         
         var request = AuthManager.shared.authenticatedRequest(url: url)
         request.httpMethod = "GET"

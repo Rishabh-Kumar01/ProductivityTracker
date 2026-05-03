@@ -47,7 +47,9 @@ class InstalledAppSyncManager {
                 print("[InstalledAppSync] Scanned \(apps.count) apps")
 
                 let payload: [[String: String]] = apps.map { app in
-                    ["bundleId": app.bundleId, "appName": app.appName]
+                    // Tag every row with platform=macos. Server defaults to
+                    // macos for legacy clients but explicit avoids surprises.
+                    ["bundleId": app.bundleId, "appName": app.appName, "platform": "macos"]
                 }
 
                 guard let url = URL(string: "\(APIConfig.baseURL)/apps/sync") else { return }

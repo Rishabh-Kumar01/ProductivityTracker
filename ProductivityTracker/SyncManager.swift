@@ -59,7 +59,9 @@ class SyncManager {
 
                 print("[Sync] Found \(records.count) unsynced activities, uploading...")
 
-                // 3. Convert to JSON payload
+                // 3. Convert to JSON payload. Tag every row platform=macos so
+                //    the server's per-platform scoping (Display Plan A.1) treats
+                //    these unambiguously without relying on the legacy default.
                 let activities = records.map { record -> [String: Any] in
                     var dict: [String: Any] = [
                         "appName": record.appName,
@@ -68,6 +70,7 @@ class SyncManager {
                         "category": record.category,
                         "productivityScore": record.productivityScore,
                         "isIdle": record.isIdle,
+                        "platform": "macos",
                     ]
                     if let bundleId = record.bundleId { dict["bundleId"] = bundleId }
                     if let windowTitle = record.windowTitle { dict["windowTitle"] = windowTitle }

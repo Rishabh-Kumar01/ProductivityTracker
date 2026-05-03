@@ -31,7 +31,8 @@ class CategoryRuleSyncManager {
 
         Task {
             do {
-                guard let url = URL(string: "\(APIConfig.baseURL)/categories/merged") else { return }
+                // Pin to macos — server scopes rules by platform.
+                guard let url = URL(string: "\(APIConfig.baseURL)/categories/merged?platform=macos") else { return }
 
                 var request = AuthManager.shared.authenticatedRequest(url: url)
                 request.httpMethod = "GET"

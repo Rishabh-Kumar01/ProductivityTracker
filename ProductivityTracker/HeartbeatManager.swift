@@ -49,6 +49,10 @@ class HeartbeatManager {
         
         let body: [String: Any] = [
             "clientVersion": clientVersion,
+            // Server upserts heartbeats by (user_id, platform) since the cross-
+            // platform schema migration. Tag explicitly so we never collide with
+            // the Android client's row.
+            "platform": "macos",
             "isBlockingActive": isBlockingActive,
             "blockedDomainCount": count,
             "terminating": isTerminating

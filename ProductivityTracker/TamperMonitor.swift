@@ -139,6 +139,7 @@ class TamperMonitor: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let body: [String: Any] = [
+            "platform": "macos",
             "removedDomains": removedDomains,
             "addedDomains": addedDomains,
             "removedCount": removedCount,

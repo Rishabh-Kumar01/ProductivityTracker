@@ -86,7 +86,8 @@ class AlertManager: ObservableObject {
     }
     
     func fetchRules() {
-        guard let url = URL(string: "\(APIConfig.baseURL)/alerts") else { return }
+        // Pin to macos platform — server now scopes alert rows by platform.
+        guard let url = URL(string: "\(APIConfig.baseURL)/alerts?platform=macos") else { return }
         let request = AuthManager.shared.authenticatedRequest(url: url)
         
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
