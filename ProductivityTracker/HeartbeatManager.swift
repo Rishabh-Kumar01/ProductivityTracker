@@ -55,7 +55,12 @@ class HeartbeatManager {
             "platform": "macos",
             "isBlockingActive": isBlockingActive,
             "blockedDomainCount": count,
-            "terminating": isTerminating
+            "terminating": isTerminating,
+            // Mac's current TZ (IANA id, e.g. "Asia/Kolkata"). Server keeps
+            // users.timezone in sync from this — moving across TZs (travel,
+            // DST) self-corrects the dashboard's daily/hourly bucketing on
+            // the next 5-min tick.
+            "timezone": TimeZone.current.identifier
         ]
         
         var request = AuthManager.shared.authenticatedRequest(url: url)
