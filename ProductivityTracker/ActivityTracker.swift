@@ -282,8 +282,9 @@ class ActivityTracker: ObservableObject {
 
         if titleChanged || urlChanged {
             print("[DIAG] Title/URL change detected — old: \(currentWindowTitle ?? "nil"), new: \(newTitle ?? "nil"), urlChanged: \(urlChanged)")
-            // Title or URL changed — close current activity and start new one
-            closeCurrentActivity()
+            // Title or URL changed — write the finished segment and roll over.
+            // flush, not close: appName / bundleId / pid carry into the new segment.
+            flushCurrentActivity()
 
             currentStartTime = Date()
             currentWindowTitle = newTitle ?? currentWindowTitle
@@ -312,7 +313,12 @@ class ActivityTracker: ObservableObject {
 
     // MARK: - Activity Lifecycle
 
-    private func closeCurrentActivity(overrideEndTime: Date? = nil) {
+    /// Writes the finished segment to the database. Deliberately does NOT clear
+    /// the app identity (appName / bundleId / pid) — a title or URL change is a
+    /// rollover within the same app, and the identity has to survive it. Losing
+    /// pid kills title polling; losing appName makes the next write a no-op.
+    /// Callers ending the segment entirely want `closeCurrentActivity()`.
+    private func flushCurrentActivity(overrideEndTime: Date? = nil) {
         guard let appName = currentAppName,
               let startTime = currentStartTime else { return }
 
@@ -322,7 +328,6 @@ class ActivityTracker: ObservableObject {
         // Skip noise from rapid switching (< 1 second)
         guard duration >= 1 else {
             print("[DIAG] Dropped sub-1s activity: \(appName), duration: \(duration)s")
-            resetCurrent()
             return
         }
 
@@ -356,8 +361,13 @@ class ActivityTracker: ObservableObject {
             print("Failed to insert activity: \(error)")
         }
 
-        resetCurrent()
         refreshStats()
+    }
+
+    /// Ends the current segment: writes it, then clears all tracked state.
+    private func closeCurrentActivity(overrideEndTime: Date? = nil) {
+        flushCurrentActivity(overrideEndTime: overrideEndTime)
+        resetCurrent()
     }
 
     private func resetCurrent() {
