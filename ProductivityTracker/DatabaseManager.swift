@@ -25,6 +25,10 @@ struct ActivityRecord: Codable, FetchableRecord, PersistableRecord, Identifiable
     var isIdle: Bool = false
     var isSynced: Bool = false
     var isSyncing: Bool = false
+    /// True while the poll loop is still extending this row. Open rows are
+    /// excluded from sync: the server's ON CONFLICT ... DO NOTHING rule would
+    /// silently discard the later, longer version of the same row.
+    var isOpen: Bool = false
 
     static let databaseTableName = "activities"
 }
@@ -165,6 +169,13 @@ final class DatabaseManager {
             }
         }
 
+        migrator.registerMigration("v6-open-row") { db in
+            try db.alter(table: "activities") { t in
+                t.add(column: "isOpen", .boolean).defaults(to: false)
+            }
+            try db.create(index: "idx_activities_isOpen", on: "activities", columns: ["isOpen"])
+        }
+
         return migrator
     }
 
@@ -173,6 +184,52 @@ final class DatabaseManager {
     func insertActivity(_ record: ActivityRecord) throws {
         try dbQueue.write { db in
             try record.insert(db)
+        }
+    }
+
+    // MARK: - Open Segment (poll-based tracking)
+
+    /// Pushes the open row's end forward. `duration` is kept in step so every
+    /// existing query that sums `duration` keeps working untouched.
+    func extendOpenActivity(id: String, endTime: Date, duration: Int) throws {
+        _ = try dbQueue.write { db in
+            try ActivityRecord
+                .filter(Column("id") == id)
+                .updateAll(db,
+                    Column("endTime").set(to: endTime),
+                    Column("duration").set(to: duration)
+                )
+        }
+    }
+
+    /// Seals the open row at its final bounds, making it eligible for sync.
+    func closeOpenActivity(id: String, endTime: Date, duration: Int) throws {
+        _ = try dbQueue.write { db in
+            try ActivityRecord
+                .filter(Column("id") == id)
+                .updateAll(db,
+                    Column("endTime").set(to: endTime),
+                    Column("duration").set(to: duration),
+                    Column("isOpen").set(to: false)
+                )
+        }
+    }
+
+    func deleteActivity(id: String) throws {
+        _ = try dbQueue.write { db in
+            try ActivityRecord.filter(Column("id") == id).deleteAll(db)
+        }
+    }
+
+    /// Seals rows left open by a crash, force-quit or power loss. Their endTime
+    /// is whatever the poll loop last flushed, so at most one flush interval of
+    /// the final segment is lost — instead of the whole segment.
+    @discardableResult
+    func finalizeOrphanedOpenRows() throws -> Int {
+        try dbQueue.write { db in
+            try ActivityRecord
+                .filter(Column("isOpen") == true)
+                .updateAll(db, Column("isOpen").set(to: false))
         }
     }
 
@@ -334,10 +391,12 @@ final class DatabaseManager {
 
     // MARK: - Sync Helpers
 
+    /// Rows still being extended by the poll loop are withheld — see `isOpen`.
     func getUnsyncedActivities(limit: Int = 500) throws -> [ActivityRecord] {
         try dbQueue.read { db in
             try ActivityRecord
                 .filter(Column("isSynced") == false && Column("isSyncing") == false)
+                .filter(Column("isOpen") == false)
                 .order(Column("startTime").asc)
                 .limit(limit)
                 .fetchAll(db)
