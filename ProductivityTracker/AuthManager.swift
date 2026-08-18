@@ -139,6 +139,16 @@ class AuthManager: ObservableObject {
         let result = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let resultData = result?["data"] as? [String: Any]
         accessToken = resultData?["accessToken"] as? String
+
+        // The server ROTATES the refresh token on every refresh: the token we
+        // just sent is now retired, and replaying it is treated as theft —
+        // reuse detection would revoke this session outright. So the new token
+        // must replace the stored one.
+        // Conditional so a response without the field leaves the existing
+        // token intact rather than nil-ing out our only credential.
+        if let newRefresh = resultData?["refreshToken"] as? String, !newRefresh.isEmpty {
+            refreshToken = newRefresh
+        }
     }
 
     func logout() {
