@@ -86,7 +86,7 @@ final class WallpaperManager: ObservableObject {
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            self?.applyToAllScreens()
+            self?.applyToAllScreens(reason: "screen config changed")
         }
 
         // macOS wallpapers are per-Space, and `setDesktopImageURL` only ever
@@ -100,7 +100,7 @@ final class WallpaperManager: ObservableObject {
             object: nil, queue: .main
         ) { [weak self] _ in
             self?.lastSpaceChange = Date()
-            self?.applyToAllScreens()
+            self?.applyToAllScreens(reason: "space switch")
         }
     }
 
@@ -116,7 +116,7 @@ final class WallpaperManager: ObservableObject {
         self.contrast = min(max(contrast, 0), 3)
         UserDefaults.standard.set(self.brightness, forKey: "wallpaperBrightness")
         UserDefaults.standard.set(self.contrast, forKey: "wallpaperContrast")
-        applyToAllScreens()
+        applyToAllScreens(reason: "brightness/contrast changed")
         pushSettingsToServer()
     }
 
@@ -168,14 +168,14 @@ final class WallpaperManager: ObservableObject {
                     let (imageData, _) = try await URLSession.shared.data(from: imageURL)
                     await MainActor.run {
                         self.lastSourceData = imageData
-                        self.applyToAllScreens()
+                        self.applyToAllScreens(reason: "image changed")
                     }
                 } else {
                     // Cleared. Spec: natives go solid black rather than
                     // restoring whatever was there before.
                     await MainActor.run {
                         self.lastSourceData = nil
-                        self.applyToAllScreens()
+                        self.applyToAllScreens(reason: "background cleared")
                     }
                 }
             } catch {
@@ -186,7 +186,8 @@ final class WallpaperManager: ObservableObject {
 
     // MARK: - Render & apply
 
-    private func applyToAllScreens() {
+    private func applyToAllScreens(reason: String = "unspecified") {
+        print("[Wallpaper] applying (\(reason))")
         for screen in NSScreen.screens {
             guard let displayID = screen.deviceDescription[
                 NSDeviceDescriptionKey("NSScreenNumber")
@@ -224,7 +225,7 @@ final class WallpaperManager: ObservableObject {
     private func verifyApplied(retrying: Bool = true) {
         guard let expected = appliedURLs.values.first?.lastPathComponent else { return }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
             guard let self = self else { return }
             if self.renderStoreContains(expected) {
                 // Confirmed on screen — tell the server, which stamps
@@ -368,7 +369,7 @@ final class WallpaperManager: ObservableObject {
             if legacy != expected || !renderStoreContains(expected.lastPathComponent) {
                 let afterSpaceSwitch = lastSpaceChange.map { Date().timeIntervalSince($0) < 15 } ?? false
                 print("[Wallpaper] wallpaper is not ours — re-applying\(afterSpaceSwitch ? " (space switch, not reporting)" : "")")
-                applyToAllScreens()
+                applyToAllScreens(reason: "enforcement")
                 // Only a change on a Space we had already claimed is the owner
                 // actually replacing it; a fresh Space is just a fresh Space.
                 if !afterSpaceSwitch { reportReverted() }
