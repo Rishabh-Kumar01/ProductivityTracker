@@ -24,7 +24,43 @@ final class DeviceRegistrar {
 
     var serverDeviceId: String? { UserDefaults.standard.string(forKey: Self.serverDeviceIdKey) }
 
+    private var timer: Timer?
+
+    /// Same file as WallpaperManager, so the two can be read as one timeline.
+    private func log(_ message: String) {
+        print("[DeviceRegistrar] " + message)
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ProductivityTracker")
+        let url = dir.appendingPathComponent("wallpaper.log")
+        let line = "\(ISO8601DateFormatter().string(from: Date()))  [device] \(message)\n"
+        guard let data = line.data(using: .utf8) else { return }
+        if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: url)
+        }
+    }
+
     private init() {}
+
+    /// Registers now, then keeps re-registering.
+    ///
+    /// The connected/disconnected state was previously learned only at launch,
+    /// so disconnecting left a running app still working and reconnecting left
+    /// it still stood down — in both directions the control did nothing until
+    /// the app was restarted. Polling is what makes the state actually
+    /// propagate; a push could be added on top for immediacy, but the poll is
+    /// the part that cannot silently miss a change.
+    func start() {
+        registerIfNeeded()
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            self?.registerIfNeeded()
+        }
+        timer?.tolerance = 30
+    }
 
     var clientDeviceId: String {
         if let existing = UserDefaults.standard.string(forKey: Self.deviceIdKey) {
@@ -36,7 +72,11 @@ final class DeviceRegistrar {
     }
 
     func registerIfNeeded() {
-        guard AuthManager.shared.isLoggedIn else { return }
+        guard AuthManager.shared.isLoggedIn else {
+            log("skipped — not logged in")
+            return
+        }
+        log("registering…")
 
         // Physical pixels, which is what the wallpaper renderer needs — points
         // alone would produce a half-resolution image on a Retina display.
@@ -68,7 +108,7 @@ final class DeviceRegistrar {
 
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                    print("[DeviceRegistrar] Registration failed: \((response as? HTTPURLResponse)?.statusCode ?? -1)")
+                    log("registration failed: HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)")
                     return
                 }
 
@@ -80,11 +120,20 @@ final class DeviceRegistrar {
                         UserDefaults.standard.set(serverId, forKey: Self.serverDeviceIdKey)
                     }
                     let disconnected = !(device["disconnected_at"] is NSNull) && device["disconnected_at"] != nil
-                    await MainActor.run { self.isDisconnected = disconnected }
-                    print("[DeviceRegistrar] Registered as \(device["id"] ?? "?")\(disconnected ? " (DISCONNECTED by owner)" : "")")
+                    await MainActor.run {
+                        let wasDisconnected = self.isDisconnected
+                        self.isDisconnected = disconnected
+                        // Coming back should take effect immediately rather than
+                        // waiting for the next wallpaper trigger.
+                        if wasDisconnected && !disconnected {
+                            self.log("reconnected — resuming wallpaper")
+                            WallpaperManager.shared.refresh()
+                        }
+                    }
+                    log("registered\(disconnected ? " — DISCONNECTED by owner" : " — connected")")
                 }
             } catch {
-                print("[DeviceRegistrar] Registration error: \(error.localizedDescription)")
+                log("registration error: \(error.localizedDescription)")
             }
         }
     }

@@ -24,7 +24,7 @@ struct ProductivityTrackerApp: App {
         if AuthManager.shared.isLoggedIn {
             SyncManager.shared.startSync()
             BlocklistSyncManager.shared.start()
-            DeviceRegistrar.shared.registerIfNeeded()
+            DeviceRegistrar.shared.start()
             WallpaperManager.shared.start()
             AccountabilityManager.shared.checkStatus()
             HeartbeatManager.shared.start()
@@ -41,7 +41,7 @@ struct ProductivityTrackerApp: App {
         ) { _ in
             SyncManager.shared.startSync()
             BlocklistSyncManager.shared.start()
-            DeviceRegistrar.shared.registerIfNeeded()
+            DeviceRegistrar.shared.start()
             WallpaperManager.shared.start()
             AccountabilityManager.shared.checkStatus()
             HeartbeatManager.shared.start()
