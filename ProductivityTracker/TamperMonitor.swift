@@ -71,7 +71,12 @@ class TamperMonitor: ObservableObject {
                 }
                 print("[TamperMonitor] hosts file was manually modified! Expected: \(expected), Got: \(currentHash)")
                 self.handleTampering()
-            } else if currentHash != "unavailable" {
+            } else if currentHash == "unavailable" {
+                // The hash could not be read, so nothing is being verified. This
+                // used to fall through to no branch at all: Miss Mode kept
+                // claiming protection while detection was silently switched off.
+                BlockManager.shared.noteTamperMonitoringUnavailable()
+            } else {
                 // Clean check
                 self.consecutiveCleanChecks += 1
                 if self.consecutiveCleanChecks >= 10 && self.currentInterval < 300 {

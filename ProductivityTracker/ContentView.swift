@@ -70,6 +70,21 @@ struct MenuBarView: View {
                 .padding(.top, 2)
             }
 
+            // Blocking enforcement. Separate from capture health: tracking can be
+            // perfect while /etc/hosts silently disagrees with the database.
+            if let detail = blockManager.blockHealth.detail {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "shield.slash.fill")
+                        .foregroundColor(blockStatusColor)
+                        .font(.caption)
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 2)
+            }
+
             Divider()
 
             // Top 3 apps today
@@ -188,6 +203,14 @@ struct MenuBarView: View {
     }
 
     // MARK: - Helpers
+
+    private var blockStatusColor: Color {
+        switch blockManager.blockHealth {
+        case .ok: return .green
+        case .degraded: return .yellow
+        case .broken: return .red
+        }
+    }
 
     private var statusColor: Color {
         guard tracker.isTracking else { return .gray }

@@ -17,28 +17,6 @@ struct TopApp: Identifiable {
     let duration: Int  // seconds
 }
 
-// MARK: - Capture Health
-
-/// Whether tracking is actually *capturing*, as opposed to merely running.
-/// `isTracking` only reports that the timer is alive — it stayed green for
-/// months during the title-change bug while ~90% of segments were dropped.
-enum CaptureHealth: Equatable {
-    case ok
-    /// Working, but some signal is missing (e.g. browser URLs).
-    case degraded(String)
-    /// Recording is compromised.
-    case broken(String)
-
-    var isOK: Bool { self == .ok }
-
-    var detail: String? {
-        switch self {
-        case .ok: return nil
-        case .degraded(let m), .broken(let m): return m
-        }
-    }
-}
-
 // MARK: - Activity Tracker
 
 class ActivityTracker: ObservableObject {

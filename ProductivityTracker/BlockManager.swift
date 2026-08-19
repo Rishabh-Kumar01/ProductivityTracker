@@ -15,6 +15,11 @@ import ServiceManagement
 class BlockManager: ObservableObject {
     static let shared = BlockManager()
     
+    /// Whether blocking is actually enforced on this machine, not just switched
+    /// on. /etc/hosts is what blocks; the database only records intent. They can
+    /// drift, and for weeks nothing noticed.
+    @Published var blockHealth: HealthState = .ok
+
     @Published var isBlockingActive: Bool = false {
         didSet {
             guard oldValue != isBlockingActive else { return }
@@ -101,6 +106,10 @@ class BlockManager: ObservableObject {
         DispatchQueue.main.async {
             self.isBlockingActive = UserDefaults.standard.bool(forKey: "isBlockingActive")
             // The didSet of isBlockingActive will automatically call activateBlocking() if true.
+            // It is skipped entirely when the persisted value equals the initial
+            // one, so reconcile explicitly — this is what repairs a block left
+            // behind by an interrupted or failed write.
+            self.reconcileHostsFile()
         }
         
         // Start temp unblock check timer
@@ -354,6 +363,90 @@ class BlockManager: ObservableObject {
 
     // MARK: - API
 
+    // MARK: - Hosts Reconciliation
+
+    private static let hostsMarkerStart = "# ===== PRODUCTIVITYTRACKER-BLOCK-START ====="
+    private static let hostsMarkerEnd = "# ===== PRODUCTIVITYTRACKER-BLOCK-END ====="
+
+    /// Domains currently written inside our managed block in /etc/hosts.
+    /// /etc/hosts is world-readable, so this needs no privileges and never prompts.
+    private func domainsInHostsFile() -> Set<String> {
+        guard let contents = try? String(contentsOfFile: "/etc/hosts", encoding: .utf8) else { return [] }
+        var inBlock = false
+        var domains: Set<String> = []
+        for line in contents.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == Self.hostsMarkerStart { inBlock = true; continue }
+            if trimmed == Self.hostsMarkerEnd { break }
+            guard inBlock, !trimmed.isEmpty, !trimmed.hasPrefix("#") else { continue }
+            // Entries look like "0.0.0.0 example.com" or "::1 www.example.com".
+            let parts = trimmed.split(separator: " ").map(String.init)
+            guard parts.count >= 2 else { continue }
+            var host = parts[1]
+            if host.hasPrefix("www.") { host = String(host.dropFirst(4)) }
+            domains.insert(host)
+        }
+        return domains
+    }
+
+    /// Makes /etc/hosts match what the database says, writing only when they
+    /// actually differ so it never prompts for no reason.
+    ///
+    /// Every other path can silently leave the two out of step: `applyBlockList()`
+    /// returns early when blocking is off, and `isBlockingActive`'s didSet is
+    /// skipped at launch whenever the persisted value already equals the initial
+    /// one — so a stale entry survived every restart with nothing left to remove
+    /// it. This is the only code that can notice and repair that.
+    func reconcileHostsFile() {
+        let expected: Set<String>
+        if isBlockingActive {
+            let active = (try? DatabaseManager.shared.getActiveBlockedDomains()) ?? []
+            expected = Set(active.map { $0.hasPrefix("www.") ? String($0.dropFirst(4)) : $0 })
+        } else {
+            expected = []
+        }
+
+        let actual = domainsInHostsFile()
+        guard actual != expected else {
+            setBlockHealth(.ok)
+            return
+        }
+
+        print("[BlockManager] hosts drift: file has \(actual.sorted()), expected \(expected.sorted()) — repairing")
+        if expected.isEmpty {
+            clearHostsBlock()
+        } else {
+            applyBlockList()
+        }
+
+        // Every write path can fail: XPC is asynchronous, sudoers returns a bool
+        // nobody checked, AppleScript can be cancelled at the password prompt.
+        // Re-read the file rather than assuming the repair worked.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self = self else { return }
+            if self.domainsInHostsFile() == expected {
+                self.setBlockHealth(.ok)
+            } else {
+                self.setBlockHealth(.broken("Couldn't update /etc/hosts — blocking is not being enforced"))
+            }
+        }
+    }
+
+    private func setBlockHealth(_ health: HealthState) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.blockHealth != health else { return }
+            self.blockHealth = health
+            if !health.isOK { print("[BlockManager] Block health: \(health.detail ?? "")") }
+        }
+    }
+
+    /// Called by TamperMonitor when it cannot read the hosts hash. Only downgrades
+    /// from .ok, so it never masks a real write failure.
+    func noteTamperMonitoringUnavailable() {
+        guard blockHealth.isOK else { return }
+        setBlockHealth(.degraded("Tamper detection unavailable — the hosts file can't be verified"))
+    }
+
     func applyBlockList() {
         guard isBlockingActive else { return }
 
@@ -366,7 +459,11 @@ class BlockManager: ObservableObject {
         }
 
         guard !domains.isEmpty else {
-            print("[BlockManager] No domains to block")
+            // Nothing left to block. Returning here used to leave the last
+            // applied set in /etc/hosts permanently — removing your final
+            // blocked domain never actually unblocked it.
+            print("[BlockManager] No domains to block — clearing hosts block")
+            clearHostsBlock()
             return
         }
 
@@ -531,7 +628,12 @@ class BlockManager: ObservableObject {
     private func deactivateBlocking() {
         workspaceCancellable?.cancel()
         workspaceCancellable = nil
+        clearHostsBlock()
+    }
 
+    /// Removes our managed block from /etc/hosts. Hosts only — deliberately does
+    /// NOT touch app blocking, so an empty domain list can never switch that off.
+    private func clearHostsBlock() {
         // Tier 1: XPC
         if helperInstalled, let proxy = getHelperProxy() {
             proxy.removeAllBlocks { success in
@@ -629,10 +731,6 @@ class BlockManager: ObservableObject {
             persistAutoBlockedBundleIds()
         }
 
-        if deletedDomainCount > 0 {
-            applyBlockList()
-        }
-
         // Restore the pre-auto-block blocking state. If focus mode was off before the first
         // auto-block flipped it on, turn it back off now that today's triggers are cleared.
         if let prior = wasBlockingActiveBeforeAutoBlock {
@@ -642,6 +740,10 @@ class BlockManager: ObservableObject {
                 isBlockingActive = prior
             }
         }
+
+        // Unconditional, and last: the row is already deleted by this point, so a
+        // write that fails here has nothing left to trigger a retry.
+        reconcileHostsFile()
 
         if clearedBundleCount > 0 || deletedDomainCount > 0 {
             print("[BlockManager] Cleared auto-blocks (\(clearedBundleCount) apps, \(deletedDomainCount) domains)")
