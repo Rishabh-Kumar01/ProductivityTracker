@@ -391,6 +391,19 @@ final class DatabaseManager {
 
     // MARK: - Sync Helpers
 
+    /// Total seconds recorded since `date`, idle included. Compared against how
+    /// long the tracker has actually been running to detect capture regressions:
+    /// the original title-change bug kept permissions healthy while silently
+    /// dropping ~90% of segments, which only a coverage measure catches.
+    func getRecordedSeconds(since date: Date) throws -> Int {
+        try dbQueue.read { db in
+            try ActivityRecord
+                .filter(Column("startTime") >= date)
+                .select(sum(Column("duration")))
+                .fetchOne(db) ?? 0
+        }
+    }
+
     /// Rows still being extended by the poll loop are withheld — see `isOpen`.
     func getUnsyncedActivities(limit: Int = 500) throws -> [ActivityRecord] {
         try dbQueue.read { db in

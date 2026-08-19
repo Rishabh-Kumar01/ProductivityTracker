@@ -31,18 +31,43 @@ struct MenuBarView: View {
                     .foregroundColor(scoreColor(dbScore))
             }
 
-            // Total tracked time
+            // Total tracked time. The dot reports whether we are actually
+            // capturing, not merely whether the timer is alive — the latter
+            // stayed green all through the title-change data loss.
             HStack(spacing: 6) {
                 Circle()
-                    .fill(tracker.isTracking ? .green : .gray)
+                    .fill(statusColor)
                     .frame(width: 8, height: 8)
-                Text(tracker.isTracking ? "Tracking..." : "Paused")
+                Text(statusLabel)
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                 Spacer()
                 Text(formatDuration(tracker.totalDuration))
                     .font(.subheadline)
                     .foregroundColor(.secondary)
+            }
+
+            // Only rendered when something is actually wrong.
+            if let detail = tracker.captureHealth.detail {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(statusColor)
+                        .font(.caption)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if case .broken = tracker.captureHealth {
+                            Button("Open Privacy Settings") {
+                                openAccessibilitySettings()
+                            }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                        }
+                    }
+                }
+                .padding(.top, 2)
             }
 
             Divider()
@@ -163,6 +188,30 @@ struct MenuBarView: View {
     }
 
     // MARK: - Helpers
+
+    private var statusColor: Color {
+        guard tracker.isTracking else { return .gray }
+        switch tracker.captureHealth {
+        case .ok: return .green
+        case .degraded: return .yellow
+        case .broken: return .red
+        }
+    }
+
+    private var statusLabel: String {
+        guard tracker.isTracking else { return "Paused" }
+        switch tracker.captureHealth {
+        case .ok: return "Tracking..."
+        case .degraded: return "Tracking (partial)"
+        case .broken: return "Not recording"
+        }
+    }
+
+    private func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
 
     private func scoreColor(_ score: Double) -> Color {
         // score is raw 0-4

@@ -17,6 +17,28 @@ struct TopApp: Identifiable {
     let duration: Int  // seconds
 }
 
+// MARK: - Capture Health
+
+/// Whether tracking is actually *capturing*, as opposed to merely running.
+/// `isTracking` only reports that the timer is alive — it stayed green for
+/// months during the title-change bug while ~90% of segments were dropped.
+enum CaptureHealth: Equatable {
+    case ok
+    /// Working, but some signal is missing (e.g. browser URLs).
+    case degraded(String)
+    /// Recording is compromised.
+    case broken(String)
+
+    var isOK: Bool { self == .ok }
+
+    var detail: String? {
+        switch self {
+        case .ok: return nil
+        case .degraded(let m), .broken(let m): return m
+        }
+    }
+}
+
 // MARK: - Activity Tracker
 
 class ActivityTracker: ObservableObject {
@@ -25,6 +47,7 @@ class ActivityTracker: ObservableObject {
     @Published var topDomains: [(domain: String, duration: Int)] = []
     @Published var totalDuration: Int = 0
     @Published var isTracking = false
+    @Published var captureHealth: CaptureHealth = .ok
 
     static let shared = ActivityTracker()
 
@@ -66,6 +89,10 @@ class ActivityTracker: ObservableObject {
         let isIdle: Bool
     }
 
+    /// Start of the current coverage measurement window. Reset on wake, so
+    /// time asleep isn't counted as time we failed to record.
+    private var trackingStartedAt: Date?
+
     /// The row currently being extended. `openEnd` is the last confirmed
     /// observation, `lastFlush` the last write to disk. Note that no duration
     /// is held here — it is always derived from start and end, which is what
@@ -101,6 +128,7 @@ class ActivityTracker: ObservableObject {
         print("[DIAG] ActivityTracker.startTracking() called at \(Date())")
         guard !isTracking else { return }
         isTracking = true
+        trackingStartedAt = Date()
 
         // Recover rows left open by a crash or force-quit before sampling again.
         try? DatabaseManager.shared.finalizeOrphanedOpenRows()
@@ -173,6 +201,7 @@ class ActivityTracker: ObservableObject {
         diagnosticHeartbeatTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             print("[DIAG] Heartbeat: isTracking=\(self.isTracking), currentApp=\(self.openKey?.appName ?? "none"), hasTimer=\(self.titlePollTimer != nil)")
+            self.checkCaptureHealth()
         }
         diagnosticHeartbeatTimer?.tolerance = 5.0
 
@@ -198,6 +227,9 @@ class ActivityTracker: ObservableObject {
                 guard let self = self, self.isTracking else { return }
                 print("[DIAG] WAKE — restarting timers at \(Date()), hasTimer: \(self.titlePollTimer != nil), currentApp: \(self.openKey?.appName ?? "none")")
 
+                // Time asleep would otherwise read as time we failed to record.
+                self.trackingStartedAt = Date()
+
                 self.titlePollTimer?.invalidate()
                 self.titlePollTimer = Timer.scheduledTimer(
                     withTimeInterval: self.pollInterval, repeats: true
@@ -212,6 +244,7 @@ class ActivityTracker: ObservableObject {
                 ) { [weak self] _ in
                     guard let self = self else { return }
                     print("[DIAG] Heartbeat: isTracking=\(self.isTracking), currentApp=\(self.openKey?.appName ?? "none"), hasTimer=\(self.titlePollTimer != nil)")
+                    self.checkCaptureHealth()
                 }
                 self.diagnosticHeartbeatTimer?.tolerance = 5.0
 
@@ -230,6 +263,7 @@ class ActivityTracker: ObservableObject {
     func stopTracking() {
         print("[DIAG] ActivityTracker.stopTracking() called at \(Date())")
         isTracking = false
+        captureHealth = .ok
         finalizeOpenSegment()
 
         diagnosticHeartbeatTimer?.invalidate()
@@ -457,6 +491,65 @@ class ActivityTracker: ObservableObject {
             .combinedSessionState,
             eventType: CGEventType(rawValue: ~0)!
         )
+    }
+
+    // MARK: - Capture Health
+
+    /// Runs on the existing 60s diagnostic timer. Three independent signals,
+    /// worst one wins:
+    ///
+    /// 1. Accessibility revoked — titles silently become nil forever. This was
+    ///    only ever checked during onboarding, so a later TCC loss (cert
+    ///    reissue, signature change, OS update) was invisible.
+    /// 2. Browsers stuck in Automation backoff — URLs stop resolving quietly.
+    /// 3. Coverage — seconds recorded vs. seconds the tracker has been running.
+    ///    This is the signal that catches failures while permissions are
+    ///    perfectly healthy, which is exactly what the title-change bug was.
+    private func checkCaptureHealth() {
+        guard isTracking else { return }
+
+        if !AXIsProcessTrusted() {
+            setHealth(.broken("Accessibility permission lost — window titles are no longer recorded"))
+            return
+        }
+
+        let denied = browserURLTracker.deniedBrowserNames
+        let urlHealth: CaptureHealth = denied.isEmpty
+            ? .ok
+            : .degraded("No URL access for \(denied.joined(separator: ", "))")
+
+        guard let startedAt = trackingStartedAt else { return }
+        let elapsed = Date().timeIntervalSince(startedAt)
+
+        // Short windows are noisy — the open segment only reaches disk every
+        // flushInterval — so don't judge coverage until there's enough of it.
+        guard elapsed >= 300 else {
+            setHealth(urlHealth)
+            return
+        }
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            let recorded = (try? DatabaseManager.shared.getRecordedSeconds(since: startedAt)) ?? 0
+            let coverage = Double(recorded) / elapsed
+
+            if coverage < 0.8 {
+                self.setHealth(.broken(String(
+                    format: "Only %.0f%% of the last %.0f min was recorded — time is being dropped",
+                    coverage * 100, elapsed / 60
+                )))
+            } else {
+                self.setHealth(urlHealth)
+            }
+        }
+    }
+
+    private func setHealth(_ health: CaptureHealth) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.captureHealth != health else { return }
+            self.captureHealth = health
+            if !health.isOK { print("[DIAG] Capture health: \(health.detail ?? "")") }
+        }
     }
 
     // MARK: - Idle Handling

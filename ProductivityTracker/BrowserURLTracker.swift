@@ -65,6 +65,17 @@ class BrowserURLTracker {
         return browserScripts.keys.contains(bundleId)
     }
 
+    /// Browsers currently inside their Automation-denied backoff, by display
+    /// name. Surfaced in the menu bar so a silent permission loss is visible
+    /// rather than showing up later as missing URLs.
+    var deniedBrowserNames: [String] {
+        let now = Date()
+        return deniedBrowsers
+            .filter { now < $0.value.retryAfter }
+            .map { browserNames[$0.key] ?? $0.key }
+            .sorted()
+    }
+
     /// Reset a browser's denied status (call when user says they've fixed permissions)
     func resetDeniedStatus() {
         deniedBrowsers.removeAll()
