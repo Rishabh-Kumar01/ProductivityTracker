@@ -191,6 +191,10 @@ class ActivityTracker: ObservableObject {
         // Take the first sample immediately rather than waiting a full interval.
         pollTick()
 
+        // Report a missing Accessibility grant straight away rather than making
+        // the user wait a full diagnostic cycle to find out nothing is landing.
+        checkCaptureHealth()
+
         // Load initial stats
         refreshStats()
 
