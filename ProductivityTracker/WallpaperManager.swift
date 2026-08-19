@@ -274,6 +274,22 @@ final class WallpaperManager: ObservableObject {
         return ciContext.createCGImage(output, from: CGRect(origin: cropOrigin, size: size))
     }
 
+    /// Tells the server the wallpaper was replaced. The server always audits it
+    /// and emails the partner at most once per device per hour, so this can be
+    /// called on every detection without worrying about flooding her.
+    private func reportReverted() {
+        guard let deviceId = DeviceRegistrar.shared.serverDeviceId,
+              AuthManager.shared.isLoggedIn,
+              let url = URL(string: "\(APIConfig.baseURL)/devices/\(deviceId)/wallpaper-reverted")
+        else { return }
+
+        Task {
+            var request = AuthManager.shared.authenticatedRequest(url: url)
+            request.httpMethod = "POST"
+            _ = try? await URLSession.shared.data(for: request)
+        }
+    }
+
     private func solidBlack(size: CGSize) -> CGImage? {
         let rect = CGRect(origin: .zero, size: size)
         let black = CIImage(color: .black).cropped(to: rect)
@@ -313,6 +329,7 @@ final class WallpaperManager: ObservableObject {
             if legacy != expected || !renderStoreContains(expected.lastPathComponent) {
                 print("[Wallpaper] wallpaper is not ours — re-applying")
                 applyToAllScreens()
+                reportReverted()
                 return
             }
         }
