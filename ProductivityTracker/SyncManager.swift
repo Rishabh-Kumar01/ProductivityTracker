@@ -74,6 +74,11 @@ class SyncManager {
                     return f
                 }()
 
+                // Ties each row to this physical device. Without it two devices
+                // on the same platform silently overwrite each other via the
+                // server's ON CONFLICT rule (see migration 019).
+                let deviceId = DeviceRegistrar.shared.serverDeviceId
+
                 let activities = records.map { record -> [String: Any] in
                     var dict: [String: Any] = [
                         "appName": record.appName,
@@ -85,6 +90,7 @@ class SyncManager {
                         "platform": "macos",
                         "localDate": localDateFormatter.string(from: record.startTime),
                     ]
+                    if let deviceId { dict["deviceId"] = deviceId }
                     if let bundleId = record.bundleId { dict["bundleId"] = bundleId }
                     if let windowTitle = record.windowTitle { dict["windowTitle"] = windowTitle }
                     if let url = record.url { dict["url"] = url }

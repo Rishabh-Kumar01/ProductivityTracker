@@ -215,7 +215,12 @@ final class WallpaperManager: ObservableObject {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             guard let self = self else { return }
-            if self.renderStoreContains(expected) { return }
+            if self.renderStoreContains(expected) {
+                // Confirmed on screen — tell the server, which stamps
+                // wallpaper_applied_at so the partner can see it landed.
+                self.pushSettingsToServer()
+                return
+            }
 
             guard retrying else {
                 print("[Wallpaper] render store still does not reference \(expected) — wallpaper is NOT applied")
