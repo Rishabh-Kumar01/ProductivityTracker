@@ -26,6 +26,10 @@ final class WallpaperManager: ObservableObject {
     /// What we last set, per display. Enforcement compares against this.
     private var appliedURLs: [CGDirectDisplayID: URL] = [:]
     private var lastSourceData: Data?
+    /// Switching Spaces makes the desktop legitimately show a different
+    /// wallpaper until we claim that Space. Without this, enforce() would read
+    /// every switch as "he changed it" and mail her each time.
+    private var lastSpaceChange: Date?
 
     /// macOS 14+ renders the desktop from com.apple.wallpaper's store, NOT from
     /// the legacy desktoppicture.db that `setDesktopImageURL` writes to. The
@@ -95,6 +99,7 @@ final class WallpaperManager: ObservableObject {
             forName: NSWorkspace.activeSpaceDidChangeNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
+            self?.lastSpaceChange = Date()
             self?.applyToAllScreens()
         }
     }
@@ -130,7 +135,13 @@ final class WallpaperManager: ObservableObject {
             request.httpBody = try? JSONSerialization.data(
                 withJSONObject: ["brightness": brightness, "contrast": contrast]
             )
-            _ = try? await URLSession.shared.data(for: request)
+            do {
+                let (_, response) = try await URLSession.shared.data(for: request)
+                let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+                if code != 200 { print("[Wallpaper] settings report rejected: HTTP \(code)") }
+            } catch {
+                print("[Wallpaper] settings report failed: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -291,7 +302,30 @@ final class WallpaperManager: ObservableObject {
         Task {
             var request = AuthManager.shared.authenticatedRequest(url: url)
             request.httpMethod = "POST"
-            _ = try? await URLSession.shared.data(for: request)
+            do {
+                var (_, response) = try await URLSession.shared.data(for: request)
+                var code = (response as? HTTPURLResponse)?.statusCode ?? -1
+
+                // A stale access token would otherwise drop the report on the
+                // floor. SyncManager already refreshes and retries on 401; this
+                // has to do the same or reverts go unrecorded whenever the token
+                // happens to have expired.
+                if code == 401 {
+                    try await AuthManager.shared.refreshAccessToken()
+                    request = AuthManager.shared.authenticatedRequest(url: url)
+                    request.httpMethod = "POST"
+                    (_, response) = try await URLSession.shared.data(for: request)
+                    code = (response as? HTTPURLResponse)?.statusCode ?? -1
+                }
+
+                if code == 200 {
+                    print("[Wallpaper] revert reported to server")
+                } else {
+                    print("[Wallpaper] revert report rejected: HTTP \(code)")
+                }
+            } catch {
+                print("[Wallpaper] revert report failed: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -332,9 +366,12 @@ final class WallpaperManager: ObservableObject {
             // the owner, the render store catches a write that never landed.
             let legacy = NSWorkspace.shared.desktopImageURL(for: screen)
             if legacy != expected || !renderStoreContains(expected.lastPathComponent) {
-                print("[Wallpaper] wallpaper is not ours — re-applying")
+                let afterSpaceSwitch = lastSpaceChange.map { Date().timeIntervalSince($0) < 15 } ?? false
+                print("[Wallpaper] wallpaper is not ours — re-applying\(afterSpaceSwitch ? " (space switch, not reporting)" : "")")
                 applyToAllScreens()
-                reportReverted()
+                // Only a change on a Space we had already claimed is the owner
+                // actually replacing it; a fresh Space is just a fresh Space.
+                if !afterSpaceSwitch { reportReverted() }
                 return
             }
         }
