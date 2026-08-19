@@ -30,6 +30,10 @@ final class WallpaperManager: ObservableObject {
     /// Settings emits a flurry of space-change notifications; applying on each
     /// one wrote ~20 JPEGs in seconds and never let WallpaperAgent settle.
     private var pendingApply: DispatchWorkItem?
+    /// When we last wrote a wallpaper. Setting one makes macOS emit a
+    /// space-change notification, so without this the app answers its own echo
+    /// and applies forever — roughly every three seconds, indefinitely.
+    private var lastApplyAt: Date?
     /// Client-side throttle on revert reports. The server also caps the email at
     /// one per device per hour; this keeps the audit log from filling up too.
     private var lastRevertReportAt: Date?
@@ -126,8 +130,11 @@ final class WallpaperManager: ObservableObject {
             // macOS emits this when the wallpaper changes too, not only on a
             // real Space switch — which is why detection has to be based on
             // what the wallpaper IS, not on which notification arrived.
-            self?.noteWallpaperMayHaveChanged()
-            self?.scheduleApply(reason: "space switch")
+            guard let self = self else { return }
+            // Ignore the notification our own write just caused.
+            if let last = self.lastApplyAt, Date().timeIntervalSince(last) < 10 { return }
+            self.noteWallpaperMayHaveChanged()
+            self.scheduleApply(reason: "space switch")
         }
     }
 
@@ -205,7 +212,7 @@ final class WallpaperManager: ObservableObject {
     /// Pulls the current customization and re-applies. Called at start and on
     /// the `customization_updated` SSE event.
     func refresh() {
-        guard AuthManager.shared.isLoggedIn else { return }
+        guard AuthManager.shared.isLoggedIn, !DeviceRegistrar.shared.isDisconnected else { return }
 
         Task {
             do {
@@ -242,7 +249,14 @@ final class WallpaperManager: ObservableObject {
     // MARK: - Render & apply
 
     private func applyToAllScreens(reason: String = "unspecified") {
+        // Disconnect is meant to stop the device doing things. Without this it
+        // kept enforcing the wallpaper while showing as disconnected.
+        if DeviceRegistrar.shared.isDisconnected {
+            log("skipping apply (\(reason)) — this device is disconnected")
+            return
+        }
         log("applying (\(reason))")
+        lastApplyAt = Date()
         for screen in NSScreen.screens {
             guard let displayID = screen.deviceDescription[
                 NSDeviceDescriptionKey("NSScreenNumber")
@@ -410,6 +424,7 @@ final class WallpaperManager: ObservableObject {
     /// Re-applies if the wallpaper was changed behind our back. macOS has no
     /// change notification, so this is a poll.
     private func enforce() {
+        guard !DeviceRegistrar.shared.isDisconnected else { return }
         guard lastSourceData != nil || !appliedURLs.isEmpty else { return }
 
         for screen in NSScreen.screens {
