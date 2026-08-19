@@ -26,10 +26,13 @@ final class WallpaperManager: ObservableObject {
     /// What we last set, per display. Enforcement compares against this.
     private var appliedURLs: [CGDirectDisplayID: URL] = [:]
     private var lastSourceData: Data?
-    /// Switching Spaces makes the desktop legitimately show a different
-    /// wallpaper until we claim that Space. Without this, enforce() would read
-    /// every switch as "he changed it" and mail her each time.
-    private var lastSpaceChange: Date?
+    /// Coalesces bursts of apply requests. Changing the wallpaper in System
+    /// Settings emits a flurry of space-change notifications; applying on each
+    /// one wrote ~20 JPEGs in seconds and never let WallpaperAgent settle.
+    private var pendingApply: DispatchWorkItem?
+    /// Client-side throttle on revert reports. The server also caps the email at
+    /// one per device per hour; this keeps the audit log from filling up too.
+    private var lastRevertReportAt: Date?
 
     /// macOS 14+ renders the desktop from com.apple.wallpaper's store, NOT from
     /// the legacy desktoppicture.db that `setDesktopImageURL` writes to. The
@@ -58,6 +61,27 @@ final class WallpaperManager: ObservableObject {
         task.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
         task.arguments = ["WallpaperAgent"]
         try? task.run()
+    }
+
+    /// Appends to a log file next to the rendered wallpapers.
+    ///
+    /// `print` from a bundle launched by Finder goes nowhere reachable, and it
+    /// does not reach unified logging either — which meant every question about
+    /// this subsystem needed the app run from Xcode. A file makes it
+    /// self-diagnosing.
+    private func log(_ message: String) {
+        // NB: must not call log() here — that is literal infinite recursion.
+        print("[Wallpaper] " + message)
+        let line = "\(ISO8601DateFormatter().string(from: Date()))  \(message)\n"
+        let url = wallpaperDir.deletingLastPathComponent().appendingPathComponent("wallpaper.log")
+        guard let data = line.data(using: .utf8) else { return }
+        if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: url)
+        }
     }
 
     private var wallpaperDir: URL {
@@ -99,9 +123,40 @@ final class WallpaperManager: ObservableObject {
             forName: NSWorkspace.activeSpaceDidChangeNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            self?.lastSpaceChange = Date()
-            self?.applyToAllScreens(reason: "space switch")
+            // macOS emits this when the wallpaper changes too, not only on a
+            // real Space switch — which is why detection has to be based on
+            // what the wallpaper IS, not on which notification arrived.
+            self?.noteWallpaperMayHaveChanged()
+            self?.scheduleApply(reason: "space switch")
         }
+    }
+
+    /// True when the desktop is showing a file we rendered.
+    private func isOurs(_ url: URL?) -> Bool {
+        guard let url else { return false }
+        return url.path.hasPrefix(wallpaperDir.path)
+    }
+
+    /// Reports a revert if the desktop is currently showing something that is
+    /// not ours. This replaces the old "was it a Space switch?" heuristic, which
+    /// could not work: macOS raises the same notification for both, so the only
+    /// reliable signal is the wallpaper's own identity.
+    private func noteWallpaperMayHaveChanged() {
+        guard lastSourceData != nil else { return }
+        let anyForeign = NSScreen.screens.contains { !isOurs(NSWorkspace.shared.desktopImageURL(for: $0)) }
+        guard anyForeign else { return }
+
+        if let last = lastRevertReportAt, Date().timeIntervalSince(last) < 300 { return }
+        lastRevertReportAt = Date()
+        reportReverted()
+    }
+
+    /// Debounced apply. Repeated calls within the window collapse into one.
+    private func scheduleApply(reason: String) {
+        pendingApply?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.applyToAllScreens(reason: reason) }
+        pendingApply = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
     }
 
     func stop() {
@@ -138,9 +193,9 @@ final class WallpaperManager: ObservableObject {
             do {
                 let (_, response) = try await URLSession.shared.data(for: request)
                 let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-                if code != 200 { print("[Wallpaper] settings report rejected: HTTP \(code)") }
+                if code != 200 { log("settings report rejected: HTTP \(code)") }
             } catch {
-                print("[Wallpaper] settings report failed: \(error.localizedDescription)")
+                log("settings report failed: \(error.localizedDescription)")
             }
         }
     }
@@ -179,7 +234,7 @@ final class WallpaperManager: ObservableObject {
                     }
                 }
             } catch {
-                print("[Wallpaper] refresh failed: \(error.localizedDescription)")
+                log("refresh failed: \(error.localizedDescription)")
             }
         }
     }
@@ -187,7 +242,7 @@ final class WallpaperManager: ObservableObject {
     // MARK: - Render & apply
 
     private func applyToAllScreens(reason: String = "unspecified") {
-        print("[Wallpaper] applying (\(reason))")
+        log("applying (\(reason))")
         for screen in NSScreen.screens {
             guard let displayID = screen.deviceDescription[
                 NSDeviceDescriptionKey("NSScreenNumber")
@@ -212,7 +267,7 @@ final class WallpaperManager: ObservableObject {
                 appliedURLs[displayID] = target
                 if let previous { try? FileManager.default.removeItem(at: previous) }
             } catch {
-                print("[Wallpaper] setDesktopImageURL failed: \(error.localizedDescription)")
+                log("setDesktopImageURL failed: \(error.localizedDescription)")
             }
         }
 
@@ -235,10 +290,10 @@ final class WallpaperManager: ObservableObject {
             }
 
             guard retrying else {
-                print("[Wallpaper] render store still does not reference \(expected) — wallpaper is NOT applied")
+                log("render store still does not reference \(expected) — wallpaper is NOT applied")
                 return
             }
-            print("[Wallpaper] write did not reach the render store — restarting WallpaperAgent")
+            log("write did not reach the render store — restarting WallpaperAgent")
             self.nudgeWallpaperAgent()
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
@@ -320,12 +375,12 @@ final class WallpaperManager: ObservableObject {
                 }
 
                 if code == 200 {
-                    print("[Wallpaper] revert reported to server")
+                    log("revert reported to server")
                 } else {
-                    print("[Wallpaper] revert report rejected: HTTP \(code)")
+                    log("revert report rejected: HTTP \(code)")
                 }
             } catch {
-                print("[Wallpaper] revert report failed: \(error.localizedDescription)")
+                log("revert report failed: \(error.localizedDescription)")
             }
         }
     }
@@ -345,7 +400,7 @@ final class WallpaperManager: ObservableObject {
             try data.write(to: url)
             return true
         } catch {
-            print("[Wallpaper] write failed: \(error.localizedDescription)")
+            log("write failed: \(error.localizedDescription)")
             return false
         }
     }
@@ -367,12 +422,8 @@ final class WallpaperManager: ObservableObject {
             // the owner, the render store catches a write that never landed.
             let legacy = NSWorkspace.shared.desktopImageURL(for: screen)
             if legacy != expected || !renderStoreContains(expected.lastPathComponent) {
-                let afterSpaceSwitch = lastSpaceChange.map { Date().timeIntervalSince($0) < 15 } ?? false
-                print("[Wallpaper] wallpaper is not ours — re-applying\(afterSpaceSwitch ? " (space switch, not reporting)" : "")")
+                noteWallpaperMayHaveChanged()
                 applyToAllScreens(reason: "enforcement")
-                // Only a change on a Space we had already claimed is the owner
-                // actually replacing it; a fresh Space is just a fresh Space.
-                if !afterSpaceSwitch { reportReverted() }
                 return
             }
         }
