@@ -104,6 +104,10 @@ final class SSEManager: NSObject, ObservableObject {
                 AlertManager.shared.fetchRules()
             case "category_updated":
                 CategoryRuleSyncManager.shared.performSync()
+            case "customization_updated":
+                // She changed the label or the background — re-render this
+                // Mac's wallpaper rather than waiting for the next launch.
+                WallpaperManager.shared.refresh()
             case "accountability_changed":
                 AccountabilityManager.shared.checkStatus()
             default:

@@ -14,10 +14,15 @@ final class DeviceRegistrar {
     /// Keychain on purpose: Keychain entries can outlive the app, and a
     /// reinstall SHOULD register as a new device with its own settings.
     private static let deviceIdKey = "clientDeviceId"
+    /// The server's uuid for this device, learned at registration. Needed to
+    /// push per-device wallpaper settings back up.
+    private static let serverDeviceIdKey = "serverDeviceId"
 
     /// Set from the registration response. Plain property, not @Published —
     /// nothing observes it yet; make this ObservableObject when the UI needs it.
     private(set) var isDisconnected = false
+
+    var serverDeviceId: String? { UserDefaults.standard.string(forKey: Self.serverDeviceIdKey) }
 
     private init() {}
 
@@ -71,6 +76,9 @@ final class DeviceRegistrar {
                 // how the Mac finds out the owner switched it off.
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let device = json["data"] as? [String: Any] {
+                    if let serverId = device["id"] as? String {
+                        UserDefaults.standard.set(serverId, forKey: Self.serverDeviceIdKey)
+                    }
                     let disconnected = !(device["disconnected_at"] is NSNull) && device["disconnected_at"] != nil
                     await MainActor.run { self.isDisconnected = disconnected }
                     print("[DeviceRegistrar] Registered as \(device["id"] ?? "?")\(disconnected ? " (DISCONNECTED by owner)" : "")")

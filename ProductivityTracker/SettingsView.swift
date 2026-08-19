@@ -68,6 +68,11 @@ struct GeneralSettingsView: View {
             }
             .padding(.bottom)
             
+            Section(header: Text("Wallpaper").font(.headline)) {
+                WallpaperAdjustmentView()
+            }
+            .padding(.bottom)
+
             Section(header: Text("Tracking").font(.headline)) {
                 Text("Idle timeout: 5 minutes")
                 Text("Sync interval: 5 minutes")
@@ -76,6 +81,60 @@ struct GeneralSettingsView: View {
                     .foregroundColor(.secondary)
             }
         }
+    }
+}
+
+/// Brightness and contrast for the wallpaper on THIS Mac. Deliberately local:
+/// what is fine at home may not be fine in an office, and the setting belongs to
+/// whoever is sitting in front of the screen.
+///
+/// The values are reported to the partner so she can see the wallpaper was
+/// dimmed — visibility rather than restriction. Any value is allowed, including
+/// fully dark.
+struct WallpaperAdjustmentView: View {
+    @ObservedObject private var wallpaper = WallpaperManager.shared
+    @State private var brightness: Double = WallpaperManager.shared.brightness
+    @State private var contrast: Double = WallpaperManager.shared.contrast
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Brightness")
+                Slider(value: $brightness, in: 0...1)
+                Text("\(Int(brightness * 100))%")
+                    .monospacedDigit()
+                    .frame(width: 44, alignment: .trailing)
+            }
+            HStack {
+                Text("Contrast")
+                Slider(value: $contrast, in: 0...2)
+                Text("\(Int(contrast * 100))%")
+                    .monospacedDigit()
+                    .frame(width: 44, alignment: .trailing)
+            }
+
+            HStack {
+                Button("Reset") {
+                    brightness = 1
+                    contrast = 1
+                    apply()
+                }
+                Spacer()
+                Button("Apply") { apply() }
+                    .keyboardShortcut(.defaultAction)
+            }
+
+            Text("Applies to this Mac only. Your partner can see the brightness you set, but cannot change it.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Re-rendering every screen on each slider tick would be wasteful, so this
+    /// is an explicit action rather than a live binding.
+    private func apply() {
+        wallpaper.setAdjustment(brightness: brightness, contrast: contrast)
     }
 }
 
