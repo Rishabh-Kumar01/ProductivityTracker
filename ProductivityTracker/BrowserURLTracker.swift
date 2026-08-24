@@ -163,14 +163,32 @@ class BrowserURLTracker {
     }
 
     /// Extract the domain from a URL string (e.g., "https://www.github.com/foo" → "github.com")
+    /// The domain of a *web* page, or nil.
+    ///
+    /// A browser's internal pages parse as perfectly valid URLs: `chrome://newtab`
+    /// yields host "newtab", `brave://settings` yields "settings". Both were
+    /// stored and counted as sites — "newtab" alone had accumulated 300 rows.
+    /// So the scheme has to be http(s), and the host has to look like a
+    /// hostname. `localhost` and bare IPs are kept: they are real hosts, and
+    /// localhost is where this project's own dashboard runs.
     static func extractDomain(from urlString: String) -> String? {
         guard let url = URL(string: urlString),
-              let host = url.host else { return nil }
-        // Strip "www." prefix
-        if host.hasPrefix("www.") {
-            return String(host.dropFirst(4))
-        }
-        return host
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let rawHost = url.host?.lowercased(),
+              looksLikeHost(rawHost)
+        else { return nil }
+
+        return rawHost.hasPrefix("www.") ? String(rawHost.dropFirst(4)) : rawHost
+    }
+
+    private static func looksLikeHost(_ host: String) -> Bool {
+        if host.isEmpty || host.contains(" ") { return false }
+        if host == "localhost" { return true }
+        if host.range(of: #"^\d{1,3}(\.\d{1,3}){3}$"#, options: .regularExpression) != nil { return true }
+        guard let lastDot = host.lastIndex(of: "."), lastDot != host.startIndex else { return false }
+        let tld = host[host.index(after: lastDot)...]
+        return tld.count >= 2 && tld.allSatisfy { $0.isLetter }
     }
 
     // MARK: - Permission Prompt
