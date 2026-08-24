@@ -1,0 +1,26 @@
+# Xcode per-user state — window layout, breakpoints, which scheme was last
+# selected. Changes every time the project is opened, belongs to one machine,
+# and means nothing to anyone else.
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# Build output
+build/
+DerivedData/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Signing material never belongs in the repo — release signing reads
+# FOCUSSYNC_* / team settings from outside it.
+*.p12
+*.mobileprovision
+*.cer
+
+# Dependency managers
+.swiftpm/
+Pods/
+Carthage/Build/
+
+.DS_Store
