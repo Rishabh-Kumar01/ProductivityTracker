@@ -28,6 +28,7 @@ final class ChastityManager: ObservableObject {
     private init() {}
 
     func start() {
+        NSLog("[Chastity] manager started")
         refresh()
         // State changes only. Five minutes is plenty — the clock itself is
         // local, so this is not what makes the display move.
@@ -73,6 +74,7 @@ final class ChastityManager: ObservableObject {
                 return
             }
             Task { @MainActor in
+                NSLog("[Chastity] status: active=\(wrapper.data.active) status=\(wrapper.data.status ?? "-")")
                 self?.status = wrapper.data
                 if let serverNow = wrapper.data.serverNowDate {
                     self?.skew = serverNow.timeIntervalSince(Date())

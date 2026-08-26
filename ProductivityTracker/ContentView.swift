@@ -275,24 +275,45 @@ struct MenuBarView: View {
                 EmptyView()
             }
 
-            // The one control that must always work, reachable without
-            // navigating anywhere.
-            Button("Release now") { askingToRelease = true }
-                .buttonStyle(.link)
-                .foregroundColor(.red)
-                .font(.caption)
-                .disabled(cage.isBusy)
+            // Confirmed INLINE, never in a sheet or confirmationDialog.
+            //
+            // A confirmationDialog inside a MenuBarExtra renders correctly and
+            // then does nothing: clicking it dismisses the popover, which tears
+            // down this view before the button's action dispatches. The release
+            // silently never happened. Everything here stays inside the popover
+            // so there is nothing to tear down.
+            if askingToRelease {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Ends the session immediately. She is told, and it stays on the record.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        Button(cage.isBusy ? "Releasing…" : "Release") {
+                            cage.panicRelease { ok in
+                                if ok { askingToRelease = false }
+                            }
+                        }
+                        .disabled(cage.isBusy)
+                        Button("Cancel") { askingToRelease = false }
+                    }
+                    .font(.caption)
+                }
+                .padding(.top, 2)
+            } else {
+                Button("Release now") { askingToRelease = true }
+                    .buttonStyle(.link)
+                    .foregroundColor(.red)
+                    .font(.caption)
+                    .disabled(cage.isBusy)
+            }
 
             if let err = cage.lastError {
-                Text(err).font(.caption2).foregroundColor(.red)
+                Text(err)
+                    .font(.caption2)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-        }
-        .confirmationDialog("Release now?", isPresented: $askingToRelease) {
-            Button("Release", role: .destructive) { cage.panicRelease { _ in } }
-            Button("Stay locked", role: .cancel) {}
-        } message: {
-            Text("The session ends immediately. She is told the moment it happens and it "
-                 + "stays on the record permanently. You do not need her permission.")
         }
     }
 
