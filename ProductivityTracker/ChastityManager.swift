@@ -57,10 +57,19 @@ final class ChastityManager: ObservableObject {
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
-        URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            if (response as? HTTPURLResponse)?.statusCode == 401 {
+                // Same gap as the release had: without this the clock quietly
+                // freezes at whatever it last read.
+                Task { @MainActor in
+                    try? await AuthManager.shared.refreshAccessToken()
+                    self?.refresh()
+                }
+                return
+            }
             guard let data = data, error == nil else { return }
             guard let wrapper = try? JSONDecoder().decode(ChastityStatusResponse.self, from: data) else {
-                print("[ChastityManager] could not decode /chastity/status")
+                NSLog("[Chastity] could not decode /chastity/status")
                 return
             }
             Task { @MainActor in
@@ -74,21 +83,50 @@ final class ChastityManager: ObservableObject {
     }
 
     /// Unconditional, and reachable from the menu bar without navigating.
+    ///
+    /// Refreshes and retries once on 401, as every other manager here does.
+    /// Without that an expired access token made the button do nothing at all —
+    /// and the error it set was invisible, because the menu bar popover closes
+    /// the moment the dialog is dismissed. For the one control that must always
+    /// work, silent failure is the worst outcome available.
     func panicRelease(completion: @escaping (Bool) -> Void) {
         guard let url = URL(string: "\(apiBaseURL)/chastity/panic") else { return completion(false) }
-        var request = AuthManager.shared.authenticatedRequest(url: url)
-        request.httpMethod = "POST"
         isBusy = true
 
-        URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
-            let ok = error == nil && (response as? HTTPURLResponse).map { (200...299).contains($0.statusCode) } == true
-            Task { @MainActor in
-                self?.isBusy = false
-                self?.lastError = ok ? nil : "Could not reach the server — the cage is still recorded as locked."
-                self?.refresh()
-                completion(ok)
+        Task { @MainActor in
+            defer { isBusy = false }
+            do {
+                var status = try await self.postPanic(url: url)
+                if status == 401 {
+                    NSLog("[Chastity] panic got 401 — refreshing token and retrying")
+                    try await AuthManager.shared.refreshAccessToken()
+                    status = try await self.postPanic(url: url)
+                }
+                NSLog("[Chastity] panic release responded \(status)")
+
+                if (200...299).contains(status) {
+                    self.lastError = nil
+                    self.refresh()
+                    completion(true)
+                } else {
+                    self.lastError = "Release failed (\(status)). You are still recorded as locked."
+                    completion(false)
+                }
+            } catch {
+                NSLog("[Chastity] panic release failed: \(error.localizedDescription)")
+                self.lastError = "Release failed: \(error.localizedDescription)"
+                completion(false)
             }
-        }.resume()
+        }
+    }
+
+    private func postPanic(url: URL) async throws -> Int {
+        var request = AuthManager.shared.authenticatedRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 20
+        let (_, response) = try await URLSession.shared.data(for: request)
+        return (response as? HTTPURLResponse)?.statusCode ?? -1
     }
 
     /// "3d 04:12:07" — days only appear once there are some.
