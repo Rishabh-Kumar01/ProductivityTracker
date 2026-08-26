@@ -12,6 +12,8 @@ import Combine
 struct MenuBarView: View {
     @ObservedObject var tracker: ActivityTracker
     @ObservedObject var blockManager = BlockManager.shared
+    @ObservedObject var cage = ChastityManager.shared
+    @State private var askingToRelease = false
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     
     @State private var dbScore: Double = 2.0
@@ -21,6 +23,13 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // The cage clock goes first: it is the state the rest of the day
+            // sits inside, and this is the surface he looks at most.
+            if let st = cage.status, st.active {
+                cageSection(st)
+                Divider()
+            }
+
             // Today's Productivity Score
             HStack {
                 Text("Today's Score")
@@ -234,6 +243,66 @@ struct MenuBarView: View {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    @ViewBuilder
+    private func cageSection(_ st: ChastityStatus) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(st.status == "pending" ? "Locked — awaiting her" : "Locked for")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Circle()
+                    .fill(st.status == "pending" ? Color.orange : Color.green)
+                    .frame(width: 8, height: 8)
+            }
+            Text(cage.elapsedText)
+                .font(.system(size: 26, weight: .bold, design: .rounded))
+                .monospacedDigit()
+
+            switch st.release?.state {
+            case "available":
+                Text("Cleaning release available — open it from your phone.")
+                    .font(.caption).foregroundColor(.secondary)
+            case "open":
+                Text("Release is open. Close it within 30 minutes or the streak breaks.")
+                    .font(.caption).foregroundColor(.orange)
+            case "waiting":
+                Text("Next cleaning release \(relativeFuture(st.release?.opensAt)).")
+                    .font(.caption).foregroundColor(.secondary)
+            default:
+                EmptyView()
+            }
+
+            // The one control that must always work, reachable without
+            // navigating anywhere.
+            Button("Release now") { askingToRelease = true }
+                .buttonStyle(.link)
+                .foregroundColor(.red)
+                .font(.caption)
+                .disabled(cage.isBusy)
+
+            if let err = cage.lastError {
+                Text(err).font(.caption2).foregroundColor(.red)
+            }
+        }
+        .confirmationDialog("Release now?", isPresented: $askingToRelease) {
+            Button("Release", role: .destructive) { cage.panicRelease { _ in } }
+            Button("Stay locked", role: .cancel) {}
+        } message: {
+            Text("The session ends immediately. She is told the moment it happens and it "
+                 + "stays on the record permanently. You do not need her permission.")
+        }
+    }
+
+    private func relativeFuture(_ iso: String?) -> String {
+        guard let iso = iso,
+              let d = ISO8601DateFormatter.chastity.date(from: iso) else { return "soon" }
+        let mins = max(0, Int(d.timeIntervalSinceNow / 60))
+        if mins < 60 { return "in \(mins) min" }
+        if mins < 1440 { return "in \(mins / 60)h" }
+        return "in \(mins / 1440)d"
     }
 
     private func scoreColor(_ score: Double) -> Color {

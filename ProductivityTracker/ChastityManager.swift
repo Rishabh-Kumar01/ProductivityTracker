@@ -1,0 +1,164 @@
+import Foundation
+import Combine
+
+/// The cage clock on the Mac.
+///
+/// The elapsed time is computed locally from `startedAt`, exactly as the phone
+/// and the dashboard do — a ticking number is arithmetic, not data, so nothing
+/// polls to render it. Status is refetched only to pick up state changes.
+///
+/// `skew` corrects for a Mac whose clock is wrong. This is the number the whole
+/// arrangement is built around; showing a wrong one would be worse than showing
+/// none.
+@MainActor
+final class ChastityManager: ObservableObject {
+
+    static let shared = ChastityManager()
+
+    @Published private(set) var status: ChastityStatus?
+    @Published private(set) var elapsed: TimeInterval = 0
+    @Published private(set) var isBusy = false
+    @Published private(set) var lastError: String?
+
+    private var statusTimer: Timer?
+    private var tickTimer: Timer?
+    private var skew: TimeInterval = 0
+    private let apiBaseURL = APIConfig.baseURL
+
+    private init() {}
+
+    func start() {
+        refresh()
+        // State changes only. Five minutes is plenty — the clock itself is
+        // local, so this is not what makes the display move.
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
+        tickTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+    }
+
+    func stop() {
+        statusTimer?.invalidate(); statusTimer = nil
+        tickTimer?.invalidate(); tickTimer = nil
+    }
+
+    private func tick() {
+        guard let started = status?.startedAtDate else { elapsed = 0; return }
+        elapsed = Date().addingTimeInterval(skew).timeIntervalSince(started)
+    }
+
+    func refresh() {
+        guard AuthManager.shared.isLoggedIn else { return }
+        guard let url = URL(string: "\(apiBaseURL)/chastity/status") else { return }
+
+        var request = AuthManager.shared.authenticatedRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
+            guard let data = data, error == nil else { return }
+            guard let wrapper = try? JSONDecoder().decode(ChastityStatusResponse.self, from: data) else {
+                print("[ChastityManager] could not decode /chastity/status")
+                return
+            }
+            Task { @MainActor in
+                self?.status = wrapper.data
+                if let serverNow = wrapper.data.serverNowDate {
+                    self?.skew = serverNow.timeIntervalSince(Date())
+                }
+                self?.tick()
+            }
+        }.resume()
+    }
+
+    /// Unconditional, and reachable from the menu bar without navigating.
+    func panicRelease(completion: @escaping (Bool) -> Void) {
+        guard let url = URL(string: "\(apiBaseURL)/chastity/panic") else { return completion(false) }
+        var request = AuthManager.shared.authenticatedRequest(url: url)
+        request.httpMethod = "POST"
+        isBusy = true
+
+        URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
+            let ok = error == nil && (response as? HTTPURLResponse).map { (200...299).contains($0.statusCode) } == true
+            Task { @MainActor in
+                self?.isBusy = false
+                self?.lastError = ok ? nil : "Could not reach the server — the cage is still recorded as locked."
+                self?.refresh()
+                completion(ok)
+            }
+        }.resume()
+    }
+
+    /// "3d 04:12:07" — days only appear once there are some.
+    var elapsedText: String {
+        let total = max(0, Int(elapsed))
+        let d = total / 86400, h = (total % 86400) / 3600
+        let m = (total % 3600) / 60, s = total % 60
+        let clock = String(format: "%02d:%02d:%02d", h, m, s)
+        return d > 0 ? "\(d)d \(clock)" : clock
+    }
+
+    /// Compact enough for the menu bar itself, where space is scarce.
+    var menuBarText: String {
+        let total = max(0, Int(elapsed))
+        let d = total / 86400, h = (total % 86400) / 3600, m = (total % 3600) / 60
+        if d > 0 { return "\(d)d \(h)h" }
+        return h > 0 ? "\(h)h \(m)m" : "\(m)m"
+    }
+}
+
+// MARK: - Wire types
+//
+// Explicitly nonisolated. The project defaults new types to MainActor, but
+// these are decoded inside a URLSession callback on a background thread — a
+// main-actor-isolated Decodable conformance is a warning today and an error
+// under Swift 6.
+
+nonisolated struct ChastityRelease: Decodable {
+    let state: String            // none | waiting | available | open
+    let opensAt: String?
+    let closesBy: String?
+    let penaltyMinutes: Int?
+}
+
+nonisolated struct ChastityStatus: Decodable {
+    let active: Bool
+    let status: String?          // pending | active
+    let startedAt: String?
+    let streakStartedAt: String?
+    let releaseIntervalMinutes: Int?
+    let release: ChastityRelease?
+    let serverNow: String
+
+    /// The API sends ISO-8601 with fractional seconds; the default formatter
+    /// rejects those, which would silently leave the clock at zero.
+    private static let iso: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static func parse(_ s: String?) -> Date? {
+        guard let s = s else { return nil }
+        return iso.date(from: s) ?? ISO8601DateFormatter().date(from: s)
+    }
+
+    var startedAtDate: Date? { Self.parse(startedAt) }
+    var serverNowDate: Date? { Self.parse(serverNow) }
+}
+
+nonisolated struct ChastityStatusResponse: Decodable {
+    let status: String
+    let data: ChastityStatus
+}
+
+extension ISO8601DateFormatter {
+    /// The API sends fractional seconds; the default formatter rejects them.
+    static let chastity: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+}

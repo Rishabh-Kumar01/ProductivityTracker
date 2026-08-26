@@ -104,6 +104,10 @@ struct ProductivityTrackerApp: App {
         MenuBarExtra("Tracker", systemImage: "chart.bar.fill") {
             MenuBarView(tracker: tracker)
                 .onAppear {
+                    // Starts the local tick and a slow status refresh. Cheap:
+                    // the clock is computed locally, so this is not what makes
+                    // the number move.
+                    ChastityManager.shared.start()
                     print("[DIAG] MenuBarExtra.onAppear fired at \(Date()) — isTracking: \(tracker.isTracking), onboarded: \(appState.hasCompletedOnboarding)")
                     if !appState.hasCompletedOnboarding {
                         appState.showOnboardingWindow(tracker: tracker)
