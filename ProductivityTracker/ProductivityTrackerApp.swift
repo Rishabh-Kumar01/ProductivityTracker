@@ -31,6 +31,12 @@ struct ProductivityTrackerApp: App {
             InstalledAppSyncManager.shared.start()
             CategoryRuleSyncManager.shared.start()
             SSEManager.shared.connect()
+            // Deferred off init, per the rule about runloop work in a
+            // singleton's init. Started here rather than in
+            // MenuBarExtra.onAppear, which only fires when the popover is
+            // opened — enforcement that waits for him to click the menu bar
+            // icon is not enforcement.
+            DispatchQueue.main.async { SleepManager.shared.start() }
         }
 
         // Watch for login state changes to start/stop sync
@@ -48,6 +54,7 @@ struct ProductivityTrackerApp: App {
             InstalledAppSyncManager.shared.start()
             CategoryRuleSyncManager.shared.start()
             SSEManager.shared.connect()
+            SleepManager.shared.start()
         }
 
         NotificationCenter.default.addObserver(
@@ -57,6 +64,10 @@ struct ProductivityTrackerApp: App {
         ) { _ in
             SyncManager.shared.stopSync()
             BlocklistSyncManager.shared.stop()
+            // Takes the overlay down too: a signed-out Mac has no policy to
+            // enforce, and leaving a screen covered with no way to fetch the
+            // hours would be a lock-out with no key.
+            SleepManager.shared.stop()
             AccountabilityManager.shared.checkStatus()
             HeartbeatManager.shared.stop()
             InstalledAppSyncManager.shared.stop()
