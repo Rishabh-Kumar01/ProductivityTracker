@@ -272,7 +272,23 @@ struct MenuBarView: View {
                 Text("Next cleaning release \(relativeFuture(st.release?.opensAt)).")
                     .font(.caption).foregroundColor(.secondary)
             default:
-                EmptyView()
+                // "none" is the ORDINARY state now, not an edge case: there is
+                // no release row at all until her window opens, so this branch
+                // covers most of the day. Falling through to EmptyView here
+                // would leave the Mac silent about a schedule that exists.
+                if let range = st.releaseWindow?.displayRange {
+                    Text("Cleaning release \(range) daily.")
+                        .font(.caption).foregroundColor(.secondary)
+                } else {
+                    Text("She has not set a release window yet.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+            }
+
+            // Penalties are whole windows now, never minutes on an interval.
+            if let skipped = st.releaseWindow?.skipWindowsRemaining, skipped > 0 {
+                Text("\(skipped) upcoming window\(skipped == 1 ? "" : "s") withheld by a penalty.")
+                    .font(.caption).foregroundColor(.orange)
             }
 
             // Confirmed INLINE, never in a sheet or confirmationDialog.

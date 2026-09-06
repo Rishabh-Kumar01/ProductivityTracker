@@ -161,6 +161,34 @@ nonisolated struct ChastityRelease: Decodable {
     let opensAt: String?
     let closesBy: String?
     let penaltyMinutes: Int?
+    /// The local day this release belongs to. Absent on a reward release, which
+    /// sits outside the daily schedule entirely.
+    let windowDate: String?
+}
+
+/// Her daily release window. Wall-clock TIMEs in HIS timezone, sent as "09:00:00".
+///
+/// This replaced `releaseIntervalMinutes`. The old rolling interval re-anchored
+/// to the moment he closed the previous release, so the release time walked
+/// forward every day and never came back.
+nonisolated struct ChastityReleaseWindow: Decodable {
+    let start: String?
+    let end: String?
+    let minHoursLocked: Int?
+    let skipWindowsRemaining: Int?
+
+    /// "09:00:00" -> "09:00". The server sends a SQL TIME, not a display string.
+    private static func hhmm(_ t: String?) -> String? {
+        guard let t = t, t.count >= 5 else { return nil }
+        return String(t.prefix(5))
+    }
+
+    /// nil when she has not set one — which is different from "not sent", and
+    /// the caller has to be able to tell those apart.
+    var displayRange: String? {
+        guard let a = Self.hhmm(start), let b = Self.hhmm(end) else { return nil }
+        return "\(a)–\(b)"
+    }
 }
 
 nonisolated struct ChastityStatus: Decodable {
@@ -168,7 +196,10 @@ nonisolated struct ChastityStatus: Decodable {
     let status: String?          // pending | active
     let startedAt: String?
     let streakStartedAt: String?
+    /// Deprecated with API 034; still sent so an older build keeps decoding.
+    /// Read `releaseWindow` instead.
     let releaseIntervalMinutes: Int?
+    let releaseWindow: ChastityReleaseWindow?
     let release: ChastityRelease?
     let serverNow: String
 
