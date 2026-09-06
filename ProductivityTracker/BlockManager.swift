@@ -33,14 +33,19 @@ class BlockManager: ObservableObject {
     }
     
     // Configurable blocked apps (bundle IDs). Persisted across launches.
-    @Published var blockedBundleIds: Set<String> = [
-        "com.apple.Music",
-        "com.spotify.client",
-        "com.apple.TV"
-    ] {
+    //
+    // Empty by default, and it must stay that way. This used to be seeded with
+    // com.apple.Music / com.spotify.client / com.apple.TV as a development
+    // convenience. Because `didSet` only writes on CHANGE, an install that never
+    // edited the list never wrote the key, so `init()`'s restore found nothing and
+    // the literal survived every launch — three apps nobody had chosen were being
+    // force-terminated on sight, with the Settings list the only evidence and no
+    // way to tell it from a real user choice. A default here is not a default; it
+    // is an enforced block.
+    @Published var blockedBundleIds: Set<String> = [] {
         didSet {
             guard oldValue != blockedBundleIds else { return }
-            UserDefaults.standard.set(Array(blockedBundleIds), forKey: Self.blockedBundleIdsKey)
+            persistBlockedBundleIds()
         }
     }
 
@@ -74,6 +79,12 @@ class BlockManager: ObservableObject {
         // Restore persisted block state before anything else so activateBlocking() uses the right set.
         if let persistedBlocked = UserDefaults.standard.stringArray(forKey: Self.blockedBundleIdsKey) {
             self.blockedBundleIds = Set(persistedBlocked)
+        } else {
+            // First launch on this machine: write the empty list explicitly so a
+            // missing key can never again be read as "not configured yet" and
+            // silently fall back to whatever the property literal happens to be.
+            // Assignments inside init() do not fire didSet, so persist by hand.
+            persistBlockedBundleIds()
         }
         self.autoBlockedBundleIds = Set(UserDefaults.standard.stringArray(forKey: Self.autoBlockedBundleIdsKey) ?? [])
         if UserDefaults.standard.object(forKey: Self.wasBlockingActiveBeforeAutoBlockKey) != nil {
@@ -765,6 +776,10 @@ class BlockManager: ObservableObject {
             wasBlockingActiveBeforeAutoBlock = isBlockingActive
             UserDefaults.standard.set(isBlockingActive, forKey: Self.wasBlockingActiveBeforeAutoBlockKey)
         }
+    }
+
+    private func persistBlockedBundleIds() {
+        UserDefaults.standard.set(Array(blockedBundleIds), forKey: Self.blockedBundleIdsKey)
     }
 
     private func persistAutoBlockedBundleIds() {
